@@ -188,27 +188,23 @@ If the project uses NuGet packages with architecture-specific native binaries, c
 
 ### Meson
 
+
 #### 1. Cross-Compilation File
 
-Create `cross/arm64-windows.txt`:
+Create `cross/arm64-windows.txt` with the following settings:
 
-```ini
-[binaries]
-c = 'cl'
-cpp = 'cl'
-ar = 'lib'
-windres = 'rc'
-
-[host_machine]
-system = 'windows'
-cpu_family = 'aarch64'
-cpu = 'aarch64'
-endian = 'little'
-
-[built-in options]
-c_args = ['/DTARGET_ARM64=1']
-cpp_args = ['/DTARGET_ARM64=1']
-```
+| Section             | Key         | Value                    |
+|---------------------|-------------|--------------------------|
+| `[binaries]`        | c           | 'cl'                     |
+| `[binaries]`        | cpp         | 'cl'                     |
+| `[binaries]`        | ar          | 'lib'                    |
+| `[binaries]`        | windres     | 'rc'                     |
+| `[host_machine]`    | system      | 'windows'                |
+| `[host_machine]`    | cpu_family  | 'aarch64'                |
+| `[host_machine]`    | cpu         | 'aarch64'                |
+| `[host_machine]`    | endian      | 'little'                 |
+| `[built-in options]`| c_args      | ['/DTARGET_ARM64=1']     |
+| `[built-in options]`| cpp_args    | ['/DTARGET_ARM64=1']     |
 
 #### 2. meson.build Modifications
 

@@ -71,7 +71,9 @@ CMake, MSBuild/Visual Studio, Meson, Make/NMake, Cargo (Rust), Autotools, Bazel,
 
 ## License
 
-Apache 2.0
+Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.  
+SPDX-License-Identifier: BSD-3-Clause-Clear
+
 ## Build Commands
 
 All build and development commands should be run from the project root directory.
