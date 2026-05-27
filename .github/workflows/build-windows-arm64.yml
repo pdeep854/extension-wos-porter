@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    runs-on: windows-arm64
+    runs-on: windows-11-arm
     steps:
       - uses: actions/checkout@v4
 
