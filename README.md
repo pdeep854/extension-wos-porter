@@ -37,9 +37,40 @@ Give it a GitHub repository URL and it will:
 - [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot) extension
 - VS Code 1.100+
 
+## Installation
+
+### From VSIX File
+
+1. **Package the extension** (if you haven't already):
+   ```
+   npm run package
+   ```
+   This produces a `.vsix` file in the project root.
+
+2. **Install in VS Code** using one of these methods:
+
+   **Option A — VS Code UI:**
+   - Open VS Code
+   - Go to the Extensions view (`Ctrl+Shift+X`)
+   - Click the `...` menu (top-right of the Extensions panel)
+   - Select **"Install from VSIX..."**
+   - Browse to and select the `.vsix` file
+
+   **Option B — Command Palette:**
+   - Open the Command Palette (`Ctrl+Shift+P`)
+   - Type **"Extensions: Install from VSIX"**
+   - Browse to and select the `.vsix` file
+
+   **Option C — Command Line:**
+   ```
+   code --install-extension arm64-porter-<version>.vsix
+   ```
+
+3. **Reload VS Code** when prompted.
+
 ## Usage
 
-1. Install the extension
+1. Install the extension (see [Installation](#installation) above)
 2. Open Copilot Chat
 3. Select the **arm64-porter** agent from the agent picker (or type `@arm64-porter`)
 4. Paste a GitHub repository URL:
