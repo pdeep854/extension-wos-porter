@@ -6,11 +6,11 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 const AGENT_FILES = [
-    'arm64-porter.agent.md',
-    'arm64-analyzer.agent.md',
-    'arm64-build-porter.agent.md',
-    'arm64-code-porter.agent.md',
-    'arm64-builder.agent.md',
+    'wos-porter.agent.md',
+    'wos-analyzer.agent.md',
+    'wos-build-porter.agent.md',
+    'wos-code-porter.agent.md',
+    'wos-builder.agent.md',
 ];
 
 function getTargetDir(): string {
@@ -71,17 +71,17 @@ export function activate(context: vscode.ExtensionContext) {
         addToSettings();
     } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        vscode.window.showErrorMessage(`ARM64 Porter: ${msg}`);
+        vscode.window.showErrorMessage(`WoS Porter: ${msg}`);
     }
 
     // Command: Reinstall agents
     context.subscriptions.push(
-        vscode.commands.registerCommand('arm64Porter.install', async () => {
+        vscode.commands.registerCommand('wosPorter.install', async () => {
             try {
                 copyAgents(context);
                 await addToSettings();
                 const selection = await vscode.window.showInformationMessage(
-                    `ARM64 Porter: Agents installed to ${getTargetDir()}`,
+                    `WoS Porter: Agents installed to ${getTargetDir()}`,
                     'Reload Window'
                 );
                 if (selection === 'Reload Window') {
@@ -89,16 +89,16 @@ export function activate(context: vscode.ExtensionContext) {
                 }
             } catch (err: unknown) {
                 const msg = err instanceof Error ? err.message : String(err);
-                vscode.window.showErrorMessage(`ARM64 Porter: ${msg}`);
+                vscode.window.showErrorMessage(`WoS Porter: ${msg}`);
             }
         })
     );
 
     // Command: Uninstall agents and clean settings
     context.subscriptions.push(
-        vscode.commands.registerCommand('arm64Porter.uninstall', async () => {
+        vscode.commands.registerCommand('wosPorter.uninstall', async () => {
             const confirm = await vscode.window.showWarningMessage(
-                'Remove all ARM64 Porter agents and settings entry?',
+                'Remove all WoS Porter agents and settings entry?',
                 { modal: true },
                 'Remove'
             );
@@ -108,7 +108,7 @@ export function activate(context: vscode.ExtensionContext) {
             await removeFromSettings();
 
             vscode.window.showInformationMessage(
-                'ARM64 Porter: Agents removed and settings cleaned.',
+                'WoS Porter: Agents removed and settings cleaned.',
                 'Reload Window'
             ).then(selection => {
                 if (selection === 'Reload Window') {
@@ -120,11 +120,11 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Command: Status
     context.subscriptions.push(
-        vscode.commands.registerCommand('arm64Porter.status', () => {
+        vscode.commands.registerCommand('wosPorter.status', () => {
             const targetDir = getTargetDir();
             const installed = AGENT_FILES.filter(f => fs.existsSync(path.join(targetDir, f)));
             vscode.window.showInformationMessage(
-                `ARM64 Porter: ${installed.length}/${AGENT_FILES.length} agents in ${targetDir}`,
+                `WoS Porter: ${installed.length}/${AGENT_FILES.length} agents in ${targetDir}`,
                 { modal: true }
             );
         })

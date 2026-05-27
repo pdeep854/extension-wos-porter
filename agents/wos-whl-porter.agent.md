@@ -1,6 +1,6 @@
 ---
 description: |
-  ARM64 WHL Porter — ports Python projects from a GitHub repository to a Windows ARM64 wheel (.whl). Accepts a GitHub repo URL as input, clones the repo, detects C/C++ extensions, modifies code and build configuration as needed for ARM64, rebuilds them for ARM64, and generates a win_arm64 .whl. Handles common build systems (setuptools, scikit-build, poetry, etc.).
+  WoS WHL Porter — ports Python projects from a GitHub repository to a Windows ARM64 wheel (.whl). Accepts a GitHub repo URL as input, clones the repo, detects C/C++ extensions, modifies code and build configuration as needed for ARM64, rebuilds them for ARM64, and generates a win_arm64 .whl. Handles common build systems (setuptools, scikit-build, poetry, etc.).
 tools:
   - run_in_terminal
   - file_search
