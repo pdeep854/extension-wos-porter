@@ -1,8 +1,8 @@
 ---
 description: "Port an open-source x64 application to Windows ARM64. Use when: porting GitHub repos to ARM64, adding ARM64 support to Windows applications, creating ARM64 build configurations for CMake MSBuild Meson Make Cargo Autotools Bazel GN Premake SCons Waf qmake xmake B2 Go node-gyp .NET Gradle Python, converting x64 SIMD to NEON, generating ARM64 porting patches."
-name: "arm64-porter"
+name: "wos-porter"
 tools: [execute, read, edit, search, web, agent, todo]
-agents: [arm64-analyzer, arm64-build-porter, arm64-code-porter]
+agents: [wos-analyzer, wos-build-porter, wos-code-porter]
 argument-hint: "Paste a GitHub repository URL to port to ARM64"
 ---
 

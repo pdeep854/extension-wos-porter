@@ -1,4 +1,4 @@
-# Contributing to extension-arm64-porter
+# Contributing to extension-wos-porter
 
 Hi there!
 We’re thrilled that you’d like to contribute to this project.
@@ -11,10 +11,10 @@ In general, contributors should develop on branches based off of `main` and pull
 ## Submitting a pull request
 
 1. Please read our [code of conduct](CODE-OF-CONDUCT.md) and [license](LICENSE.txt).
-1. [Fork](https://github.com/qualcomm/extension-arm64-porter/fork) and clone the repository.
+1. [Fork](https://github.com/qualcomm/extension-wos-porter/fork) and clone the repository.
 
     ```bash
-    git clone https://github.com/<username>/extension-arm64-porter.git
+    git clone https://github.com/<username>/extension-wos-porter.git
     ```
 
 1. Create a new branch based on `main`:
@@ -26,7 +26,7 @@ In general, contributors should develop on branches based off of `main` and pull
 1. Create an upstream `remote` to make it easier to keep your branches up-to-date:
 
     ```bash
-    git remote add upstream https://github.com/qualcomm/extension-arm64-porter.git
+    git remote add upstream https://github.com/qualcomm/extension-wos-porter.git
     ```
 
 1. Make your changes, add tests, and make sure the tests still pass.
@@ -50,7 +50,7 @@ In general, contributors should develop on branches based off of `main` and pull
 
     The `-u` is shorthand for `--set-upstream`. This will set up the tracking reference so subsequent runs of `git push` or `git pull` can omit the remote and branch.
 
-1. [Submit a pull request](https://github.com/qualcomm/extension-arm64-porter/pulls) from your branch to `main`.
+1. [Submit a pull request](https://github.com/qualcomm/extension-wos-porter/pulls) from your branch to `main`.
 1. Pat yourself on the back and wait for your pull request to be reviewed.
 
 ## Security Analysis of Pull Requests

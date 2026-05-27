@@ -1,6 +1,6 @@
 ---
 description: "Build, validate, and test a project for Windows ARM64. Use when: building ARM64 binaries, validating ARM64 architecture with dumpbin, running ARM64 tests, fixing ARM64 build errors, compiling tests and examples for ARM64, verifying build artifacts, resolving ARM64-specific compilation failures."
-name: "arm64-builder"
+name: "wos-builder"
 tools: [execute, read, edit, search, todo]
 argument-hint: "Provide the local project path to build for ARM64"
 ---

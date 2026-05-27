@@ -1,4 +1,4 @@
-# ARM64 Porter — Windows ARM64 Porting Agent for GitHub Copilot
+# WoS Porter — Windows ARM64 Porting Agent for GitHub Copilot
 
 AI-powered agents that automatically port open-source x64 Windows applications to native ARM64.
 
@@ -18,18 +18,18 @@ Give it a GitHub repository URL and it will:
 
 | Agent | Role |
 |-------|------|
-| `arm64-porter` | Main orchestrator — runs the full 7-phase porting pipeline |
-| `arm64-analyzer` | Read-only deep scan of a repo for ARM64 readiness |
-| `arm64-build-porter` | Modifies build configurations (CMake, MSBuild, Meson, Cargo, etc.) |
-| `arm64-code-porter` | Ports x64-specific source code (SIMD, inline asm, arch guards) |
-| `arm64-builder` | Builds, validates binaries with dumpbin, and fixes build errors |
+| `wos-porter` | Main orchestrator — runs the full 7-phase porting pipeline |
+| `wos-analyzer` | Read-only deep scan of a repo for ARM64 readiness |
+| `wos-build-porter` | Modifies build configurations (CMake, MSBuild, Meson, Cargo, etc.) |
+| `wos-code-porter` | Ports x64-specific source code (SIMD, inline asm, arch guards) |
+| `wos-builder` | Builds, validates binaries with dumpbin, and fixes build errors |
 
 ## Included Instructions
 
 | File | Purpose |
 |------|---------|
-| `arm64-build-errors.instructions.md` | Diagnosis and fix patterns for ARM64 compiler/linker errors |
-| `arm64-porting-knowledge.instructions.md` | SSE→NEON reference, Windows ARM64 specifics, memory model differences |
+| `wos-build-errors.instructions.md` | Diagnosis and fix patterns for ARM64 compiler/linker errors |
+| `wos-porting-knowledge.instructions.md` | SSE→NEON reference, Windows ARM64 specifics, memory model differences |
 
 ## Requirements
 
@@ -63,7 +63,7 @@ Give it a GitHub repository URL and it will:
 
    **Option C — Command Line:**
    ```
-   code --install-extension arm64-porter-<version>.vsix
+   code --install-extension wos-porter-<version>.vsix
    ```
 
 3. **Reload VS Code** when prompted.
@@ -72,7 +72,7 @@ Give it a GitHub repository URL and it will:
 
 1. Install the extension (see [Installation](#installation) above)
 2. Open Copilot Chat
-3. Select the **arm64-porter** agent from the agent picker (or type `@arm64-porter`)
+3. Select the **wos-porter** agent from the agent picker
 4. Paste a GitHub repository URL:
 
 ```
@@ -85,16 +85,15 @@ The agent will clone the repo, analyze it, port it, build it, and produce a patc
 
 You can also invoke individual agents directly:
 
-- `@arm64-analyzer` — Analyze a local repo path for ARM64 readiness
-- `@arm64-builder` — Build and validate an already-ported project
+- `wos-builder` — Build and validate an already-ported project
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `ARM64 Porter: Install Agents` | Install/reinstall all agent and instruction files |
-| `ARM64 Porter: Uninstall Agents` | Remove all installed agent and instruction files |
-| `ARM64 Porter: Check Installation Status` | Verify which files are installed |
+| `WoS Porter: Install Agents` | Install/reinstall all agent and instruction files |
+| `WoS Porter: Uninstall Agents` | Remove all installed agent and instruction files |
+| `WoS Porter: Check Installation Status` | Verify which files are installed |
 
 ## Supported Build Systems
 
