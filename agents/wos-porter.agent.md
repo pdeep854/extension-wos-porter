@@ -26,7 +26,7 @@ The 7 phases you MUST execute in this exact order — each phase has a REQUIRED 
 ## Phase 1: Setup
 
 1. Parse and validate the GitHub URL (accept `https://github.com/owner/repo`, `owner/repo`, etc.)
-2. Clone to `$env:TEMP\arm64-port-<repoName>` and create `arm64-port` branch
+2. Clone to `C:\src\wos-port-<repoName>` (avoid `$env:TEMP` — repos with relative output paths in `.vcxproj` files inherit temp-path problems like AV scanning and MAX_PATH exhaustion). Create directory if needed, then create `wos-port` branch.
 3. Create todo list with EXACTLY these items (all 7 phases must appear):
    ```
    1. "Phase 1: Clone and branch" -> completed (you just did it)
@@ -176,7 +176,7 @@ The 7 phases you MUST execute in this exact order — each phase has a REQUIRED 
 
 ### Repository
 - **Source**: <URL>
-- **Branch**: `arm64-port` at `<workDir>`
+- **Branch**: `wos-port` at `<workDir>`
 - **Commit(s)**: <hash(es)>
 
 ### Changes Made
@@ -214,13 +214,13 @@ The 7 phases you MUST execute in this exact order — each phase has a REQUIRED 
 ### How to Generate a Patch File
 ```powershell
 cd <workDir>
-git format-patch main --stdout > arm64-port.patch
+git format-patch main --stdout > wos-port.patch
 ```
 ```
 
 ## Constraints
 
-- DO NOT push to any remote — all changes stay local on `arm64-port` branch
+- DO NOT push to any remote — all changes stay local on `wos-port` branch
 - DO NOT modify `main`/`master` — ARM64 is added alongside, never replacing x64
 - DO NOT make changes beyond ARM64 porting — no bug fixes or refactoring
 - DO NOT skip the build phase — it is MANDATORY

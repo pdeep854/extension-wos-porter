@@ -84,15 +84,15 @@ tools:
 
 +## Workflow
 +1. Accept a GitHub repository URL for a Python project as input
-+2. Clone the repository into a unique subdirectory under %LOCALAPPDATA%/Temp (using os.tmpdir() or process.env.TEMP)
-+3. Create a new branch (e.g., arm64-wheel-port)
++2. Clone the repository into `C:\src\wos-whl-port-<repoName>` (avoid temp directories — repos with relative output paths inherit temp-path problems like AV scanning and MAX_PATH exhaustion). Create directory if needed.
++3. Create a new branch (e.g., wos-wheel-port)
 +4. Detect if the project is a Python package with native C/C++ extensions (setup.py, pyproject.toml, .c/.cpp/.pyx files)
 +5. Analyze and modify the code and build configuration as needed to enable Windows ARM64 wheel generation (e.g., patch setup.py, pyproject.toml, add platform tags, update compiler flags)
 +6. After all changes, commit them to the new branch with a message describing the ARM64 wheel port
 +7. Set up a Windows ARM64 Python build environment (ensure ARM64 Python, MSVC/Clang toolchain)
 +8. Build the wheel for win_arm64 using the appropriate build system (setuptools, scikit-build, poetry, etc.)
 +9. If the build is successful, create a final commit with any additional changes required for the wheel
-+10. Output the generated .whl file, a build report (including a summary of all code changes, manual steps required, or errors encountered), and the temp directory path used (optionally clean up the temp directory)
++10. Output the generated .whl file, a build report (including a summary of all code changes, manual steps required, or errors encountered), and the work directory path used (optionally clean up the work directory)
 
 ## Limitations
 - Only supports standard Python extension build systems
