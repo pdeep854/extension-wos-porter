@@ -5,6 +5,10 @@
   "version": "1.0.0",
   "publisher": "wos-porter",
   "license": "BSD-3-Clause-Clear",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qualcomm/extension-wos-porter.git"
+  },
   "engines": {
     "vscode": "^1.100.0"
   },
