@@ -21,8 +21,8 @@ You will receive:
 
 - **Never break x64**: All existing x64 code must continue to work unchanged.
 - **Use `#if` / `#elif` guards**: ARM64 code goes in guarded blocks alongside x64 code.
-- **Prefer sse2neon.h for intrinsics**: Use the sse2neon header translation library as the primary strategy for SSE/SSE2/SSE3/SSSE3/SSE4.x intrinsics. Only write manual NEON translations for AVX/AVX2/AVX-512 intrinsics (not covered by sse2neon) or for performance-critical hot paths.
-- **Provide C fallbacks**: When a clean ARM64 equivalent isn't available, provide a portable C implementation as fallback.
+- **Hand-write `<arm_neon.h>` translations for SIMD**: every NEON instruction must come from a hand-written intrinsic. Do NOT vendor or include `sse2neon.h`, `simde`, `xsimd`, `highway`, or any other SIMD translation/abstraction header — these are forbidden by the porting workflow. The same rule applies to AVX/AVX2/AVX-512: hand-write the NEON equivalents (typically 2× 128-bit NEON ops per 256-bit AVX op).
+- **Provide C fallbacks**: When a clean ARM64 equivalent isn't available, provide a portable C implementation as fallback. A scalar fallback is also acceptable as a temporary placeholder for any SSE kernel not yet hand-ported — it keeps the file linking on ARM64 while `wos-optimizer` (Phase 7) hand-ports the hot kernels later.
 - **Match project style**: Follow existing code conventions for formatting, naming, comments.
 - **Comment all additions**: Mark ARM64 code blocks with clear comments.
 
@@ -49,63 +49,80 @@ Portable pattern for Windows:
 
 ## Porting Procedures
 
-### 1. SIMD Intrinsics — sse2neon Integration
+### 1. SIMD Intrinsics — Hand-Written `<arm_neon.h>` Translation
 
-#### Step 1: Add sse2neon.h to the project
+**Policy: no translation shim libraries.** Every NEON instruction must come from a hand-written `<arm_neon.h>` intrinsic. `sse2neon.h`, `simde`, `xsimd`, `highway`, and similar are forbidden by the workflow — do not vendor or include them. The deep NEON kernel work (`vfmaq_*`, `vqtbl1q_u8`, `vbslq_*`, etc.) is owned by `wos-optimizer` in Phase 7; your job here is to (a) add ARM64 arch guards so the file compiles, (b) provide a correct scalar fallback for any SSE kernel you don't translate inline, and (c) translate the trivial 1:1 intrinsics if doing so is faster than waiting for Phase 7.
 
-Create a header or add to an existing common header that wraps SIMD includes:
+#### Step 1: Add the ARM64 SIMD include
 
-```c
-/* platform_simd.h — Architecture-abstracted SIMD includes */
-#ifndef PLATFORM_SIMD_H
-#define PLATFORM_SIMD_H
-
-#if defined(_M_ARM64) || defined(__aarch64__)
-    /* ARM64: Use sse2neon to translate SSE intrinsics to NEON */
-    #include "sse2neon.h"
-#elif defined(_M_X64) || defined(__x86_64__)
-    /* x64: Native SSE/AVX headers */
-    #include <immintrin.h>
-#else
-    #error "Unsupported architecture"
-#endif
-
-#endif /* PLATFORM_SIMD_H */
-```
-
-Place `sse2neon.h` in a sensible location (e.g., `src/`, `include/`, `third_party/`, or `extern/` — match the project's convention for third-party headers). Use the single-header version from https://github.com/DLTcollab/sse2neon.
-
-**Note**: Do NOT actually download the file. Instead, create a placeholder comment directing the developer to download it, and add a note to the porting report.
-
-#### Step 2: Replace SIMD includes in source files
-
-In each file that includes x64 SIMD headers:
+In each file that includes x86 SIMD headers, add an ARM64 branch that includes `<arm_neon.h>`:
 
 **Before:**
 ```c
-#include <immintrin.h>
-// or
-#include <emmintrin.h>
-#include <xmmintrin.h>
+#include <immintrin.h>   // or <emmintrin.h>, <xmmintrin.h>, etc.
 ```
 
-**After:**
+**After (preferred — in-place arch guard):**
 ```c
-#include "platform_simd.h"
+#if defined(_M_X64) || defined(__x86_64__) || defined(_M_IX86) || defined(__i386__)
+#  include <immintrin.h>
+#elif defined(_M_ARM64) || defined(__aarch64__)
+#  include <arm_neon.h>
+#else
+#  error "Unsupported architecture"
+#endif
 ```
 
-If the project already has its own SIMD abstraction header, integrate into that instead.
+If the project already has its own SIMD abstraction header, add the ARM64 branch to it instead of duplicating.
 
-#### Step 3: Handle AVX/AVX2/AVX-512 (not covered by sse2neon)
+#### Step 2: Guard each x86-intrinsic kernel and add an ARM64 path
 
-For AVX and wider intrinsics (`_mm256_*`, `_mm512_*`), sse2neon does not provide translations. These need manual handling:
+Wrap each function body that uses `_mm_*` / `__m128*` intrinsics so the x86 code stays compiled on x64 hosts and a ported (or fallback) implementation runs on ARM64:
+
+```c
+void kernel_xyz(...) {
+#if defined(_M_X64) || defined(__x86_64__)
+    /* original SSE body, untouched */
+    __m128i v = _mm_loadu_si128((const __m128i*)src);
+    v = _mm_add_epi8(v, _mm_set1_epi8(1));
+    _mm_storeu_si128((__m128i*)dst, v);
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    /* Hand-written NEON port using <arm_neon.h>. For trivial 1:1 cases,
+     * translate inline here; for complex kernels, leave a scalar fallback
+     * (see below) so the file still links — wos-optimizer will hand-port
+     * the hot kernels in Phase 7. */
+    uint8x16_t v = vld1q_u8(src);
+    v = vaddq_u8(v, vdupq_n_u8(1));
+    vst1q_u8(dst, v);
+#else
+    /* Scalar reference */
+    for (size_t i = 0; i < n; ++i) dst[i] = src[i] + 1;
+#endif
+}
+```
+
+For kernels too complex to translate confidently in this pass (PSHUFB-heavy, MOVEMASK, MADD, PACKUS, dense `_mm_*_pd` double-precision, AVX/AVX2 wider-than-128-bit), provide a scalar fallback under the `_M_ARM64` branch so the file compiles and the output is correct (just slow):
+
+```c
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    /* Scalar fallback — correct but unvectorized.
+     * wos-optimizer (Phase 7) will hand-port this kernel using NEON. */
+    for (size_t i = 0; i < n; ++i) { /* ...scalar equivalent of the SSE body... */ }
+#endif
+```
+
+If the project routes SSE files through a runtime CPUID dispatcher, register the ARM64 build as the unconditional path for the dispatched symbol — NEON is always present on Windows ARM64, so there's no "detect-then-fall-back" needed.
+
+#### Step 3: Handle AVX/AVX2/AVX-512 (no shim available, hand-write only)
+
+For AVX and wider intrinsics (`_mm256_*`, `_mm512_*`), there is no shim library option — hand-write the NEON equivalent as two (or four) 128-bit NEON operations, or fall back to scalar:
 
 ```c
 #if defined(_M_X64) || defined(__x86_64__)
     /* AVX2 implementation */
     __m256i result = _mm256_add_epi32(a, b);
 #elif defined(_M_ARM64) || defined(__aarch64__)
-    /* ARM64: Process in two 128-bit NEON operations */
+    /* ARM64: split into two 128-bit NEON adds */
     int32x4_t result_lo = vaddq_s32(a_lo, b_lo);
     int32x4_t result_hi = vaddq_s32(a_hi, b_hi);
 #endif
@@ -364,8 +381,8 @@ If the project has `src/arch/x64/something.c`, create `src/arch/arm64/something.
 
 - DO NOT modify any x64-specific code that is properly guarded — only ADD ARM64 branches
 - DO NOT remove any functionality — all x64 builds must remain working
-- DO NOT add `#include <arm_neon.h>` directly in source files. Use sse2neon.h or the platform abstraction header
-- DO NOT blindly translate — understand what the x64 code does before writing ARM64 equivalent
+- DO NOT vendor or include `sse2neon.h`, `simde`, `xsimd`, `highway`, or any other SIMD translation/abstraction library. Use `<arm_neon.h>` directly inside ARM64 guards.
+- DO NOT blindly translate — understand what the x64 code does before writing ARM64 equivalent. When in doubt, leave a correct scalar fallback under the `_M_ARM64` branch; `wos-optimizer` (Phase 7) will hand-port it later.
 - PREFER intrinsics over inline assembly for new ARM64 code
 - ALWAYS add a comment explaining the ARM64 path when the translation is non-obvious
 - When the correct ARM64 equivalent is uncertain, provide a C fallback with a `/* TODO: optimize with NEON */` comment

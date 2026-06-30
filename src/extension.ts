@@ -11,11 +11,19 @@ const AGENT_FILES = [
     'wos-build-porter.agent.md',
     'wos-code-porter.agent.md',
     'wos-builder.agent.md',
+    'wos-tester.agent.md',
+    'wos-optimizer.agent.md',
 ];
 
 function getTargetDir(): string {
     const home = process.env.USERPROFILE || process.env.HOME || '';
     return path.join(home, '.copilot', 'agents');
+}
+
+// Sanitize a file name to a bare basename before joining, stripping any
+// directory or `..` components so it cannot traverse outside `baseDir`.
+function agentPath(baseDir: string, file: string): string {
+    return path.join(baseDir, path.basename(file));
 }
 
 function copyAgents(context: vscode.ExtensionContext): void {
@@ -24,8 +32,8 @@ function copyAgents(context: vscode.ExtensionContext): void {
         fs.mkdirSync(targetDir, { recursive: true });
     }
     for (const file of AGENT_FILES) {
-        const src = path.join(context.extensionPath, 'agents', file);
-        const dst = path.join(targetDir, file);
+        const src = agentPath(path.join(context.extensionPath, 'agents'), file);
+        const dst = agentPath(targetDir, file);
         fs.copyFileSync(src, dst);
     }
 }
@@ -33,7 +41,7 @@ function copyAgents(context: vscode.ExtensionContext): void {
 function removeAgents(): void {
     const targetDir = getTargetDir();
     for (const file of AGENT_FILES) {
-        const filePath = path.join(targetDir, file);
+        const filePath = agentPath(targetDir, file);
         if (fs.existsSync(filePath)) {
             fs.unlinkSync(filePath);
         }
@@ -122,7 +130,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('wosPorter.status', () => {
             const targetDir = getTargetDir();
-            const installed = AGENT_FILES.filter(f => fs.existsSync(path.join(targetDir, f)));
+            const installed = AGENT_FILES.filter(f => fs.existsSync(agentPath(targetDir, f)));
             vscode.window.showInformationMessage(
                 `WoS Porter: ${installed.length}/${AGENT_FILES.length} agents in ${targetDir}`,
                 { modal: true }
