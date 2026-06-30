@@ -18,11 +18,13 @@ Give it a GitHub repository URL and it will:
 
 | Agent | Role |
 |-------|------|
-| `wos-porter` | Main orchestrator — runs the full 7-phase porting pipeline |
+| `wos-porter` | Main orchestrator — runs the full 8-phase porting pipeline |
 | `wos-analyzer` | Read-only deep scan of a repo for ARM64 readiness |
 | `wos-build-porter` | Modifies build configurations (CMake, MSBuild, Meson, Cargo, etc.) |
 | `wos-code-porter` | Ports x64-specific source code (SIMD, inline asm, arch guards) |
 | `wos-builder` | Builds, validates binaries with dumpbin, and fixes build errors |
+| `wos-tester` | Runs and fixes ARM64 test suites and benchmarks |
+| `wos-optimizer` | Applies hand-written ARM NEON intrinsics to hot kernels for performance |
 
 ## Included Instructions
 
@@ -86,6 +88,73 @@ The agent will clone the repo, analyze it, port it, build it, and produce a patc
 You can also invoke individual agents directly:
 
 - `wos-builder` — Build and validate an already-ported project
+- `wos-tester` — Run and fix ARM64 test suites and benchmarks
+- `wos-optimizer` — Apply ARM NEON intrinsics to hot kernels
+
+## Using the Agents in Claude Code
+
+In [Claude Code](https://docs.claude.com/en/docs/claude-code) the recommended setup is a **single `/wos-porter` slash command** as the entry point. It hands the job to the `wos-porter` agent, which then delegates each phase to the other six agents (analyzer, build-porter, code-porter, builder, tester, optimizer) — exactly the same orchestration the extension uses. You run one command; the sub-agents are invoked for you.
+
+This uses two Claude Code directories:
+
+- `.claude/commands/` — the one user-facing slash command (`/wos-porter`)
+- `.claude/agents/` — the seven agents the command and orchestrator use as subagents
+
+Use `~/.claude/...` instead of `.claude/...` for either to make them available in every project.
+
+### 1. Install the seven agents as subagents
+
+Copy all seven agent files into `.claude/agents/`, renaming `*.agent.md` → `*.md` (Claude Code's subagent name is the filename minus `.md`). They ship under `agents/` in the extension and install to `~/.copilot/agents/`:
+
+```bash
+mkdir -p .claude/agents
+for f in ~/.copilot/agents/wos-*.agent.md; do
+  name=$(basename "$f" .agent.md)
+  cp "$f" ".claude/agents/$name.md"
+done
+```
+
+In each copied file, convert the Copilot frontmatter to Claude Code subagent frontmatter:
+
+| Copilot key | Claude Code subagent key |
+|---|---|
+| `tools: [execute, read, edit, search, todo, agent]` | `tools: Bash, Read, Edit, Write, Grep, Glob, TodoWrite, Task` |
+| `description`, `name` | keep as-is (both used by subagents) |
+| `argument-hint`, `user-invocable`, `agents` | remove (not used by subagents) |
+
+Tool-name mapping: `execute`→`Bash`, `read`→`Read`, `edit`→`Edit`/`Write`, `search`→`Grep`/`Glob`, `todo`→`TodoWrite`, `agent`→`Task`. Omit the `tools` line entirely to grant all tools — the simplest option. **`wos-porter` must keep the `Task` tool** so it can invoke the other six subagents.
+
+### 2. Create the single `/wos-porter` slash command
+
+Add one file, `.claude/commands/wos-porter.md`, that delegates to the `wos-porter` agent and passes the repo URL through with `$ARGUMENTS`:
+
+```markdown
+---
+description: Port an open-source x64 application to Windows ARM64.
+argument-hint: <github-repo-url>
+allowed-tools: Task
+---
+
+Use the **wos-porter** subagent to port the following repository to native
+Windows ARM64. It must run its full pipeline — analyze, port the build system
+and source, build, validate with dumpbin, test, and optimize — delegating each
+phase to the wos-analyzer, wos-build-porter, wos-code-porter, wos-builder,
+wos-tester, and wos-optimizer subagents as defined in its instructions.
+
+Repository: $ARGUMENTS
+```
+
+The slash command itself stays tiny — all the porting logic lives in the `wos-porter` agent body, unchanged.
+
+### 3. Run it
+
+Type `/` to confirm `/wos-porter` is listed, then invoke it with a repo URL:
+
+```
+> /wos-porter https://github.com/user/repo
+```
+
+Claude Code launches the `wos-porter` agent, which in turn spawns the analyzer, porters, builder, tester, and optimizer subagents to complete the port. Run `/agents` to verify all seven subagents loaded.
 
 ## Commands
 
