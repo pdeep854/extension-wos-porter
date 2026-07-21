@@ -7,7 +7,7 @@ This is the Claude Code packaging of the `wos-porter` VS Code extension — the 
 ## What's inside
 
 - **commands/** — `/wos-porter:wos-porter <repo-url>` — the entry-point orchestrator that runs the 8-phase pipeline in the main loop.
-- **agents/** — the `wos-porter` pipeline instructions plus 6 sub-agents (`wos-analyzer`, `wos-build-porter`, `wos-code-porter`, `wos-builder`, `wos-tester`, `wos-optimizer`) spawned by the orchestrator, and the standalone `wos-etl-hotspot` agent (see [ETL Hotspot Vectorization](#etl-hotspot-vectorization-wos-etl-hotspot)).
+- **agents/** — the `wos-porter` pipeline instructions plus 6 sub-agents (`wos-analyzer`, `wos-build-porter`, `wos-code-porter`, `wos-builder`, `wos-tester`, `wos-optimizer`) spawned by the orchestrator, and the standalone `wos-etl-hotspot` agent (see [ETL Hotspot Optimization](#etl-hotspot-optimization-wos-etl-hotspot)).
 - **prompts/** — `wos-verify-port.prompt.md`, the Phase 8 verification gate the orchestrator reads and runs inline.
 - **skills/** — 11 auto-loading skills (NEON reference, toolchain discovery, SSE/AVX→NEON translation, build-error recipes, WoA dashboard, etc.).
 - **references/** — porting-knowledge docs and per-build-system recipes loaded on demand by the agents.
@@ -140,36 +140,38 @@ By default the pipeline clones into `C:\src\wos-porter\<repo>`. Override it by s
 $env:WOS_PORTER_WORKDIR = "D:\ports"
 ```
 
-## ETL Hotspot Vectorization (`wos-etl-hotspot`)
+## ETL Hotspot Optimization (`wos-etl-hotspot`)
 
-A **standalone** agent, separate from the porting pipeline. Give it a *representative ETL trace* of your already-built app and it finds the functions that dominate that workload, then applies ARM64 vector-extension optimizations (**NEON / SVE / SVE2 / SME** only) to those hotspots and their in-source callees. It **writes the edits and stops** — it does not build, test, or commit.
+A **standalone** agent, separate from the porting pipeline. Give it a **project directory** and it runs the full closed loop: **build → profile → optimize → rebuild → re-profile → validate → commit**. It builds the project for ARM64 (with PDBs), obtains a CPU trace, finds the functions that dominate the workload, applies the full range of Windows ARM64 optimizations (**NEON/SVE/SVE2/SME** vectorization plus scalar/branch/memory/compiler tuning) to those hotspots and their in-source callees, then rebuilds and re-profiles to **validate the speedup**, committing each validated win.
 
-**Required inputs — provide all four** (the agent asks for any that are missing and never guesses paths):
+**Inputs:**
 
-| Input | What it is | Example |
-|---|---|---|
-| `.exe` path | The built application executable | `C:\build\sqlite3.exe` |
-| `.pdb` path | Matching PDB file **or** a folder of PDBs (same build as the `.exe`) | `C:\build\sqlite3.pdb` |
-| `.etl` path | An ETL trace of a **real** workload scenario (not idle/synthetic) | `C:\traces\scenario.etl` |
-| Source directory | Root of the application source tree | `C:\src\sqlite` |
+| Input | Required? | What it is | Example |
+|---|---|---|---|
+| Project directory | **Always** | Application source root (`.sln`/`.vcxproj`/`CMakeLists.txt`) | `C:\src\sqlite` |
+| Workload | Optional | Command to exercise the app during tracing (else auto-detected) | `bench.exe input.dat` |
+| ARM64 `.etl` trace | **Only on an x64 host** | A CPU trace captured on a native ARM64 device for this build | `C:\traces\scenario.etl` |
 
-**How to run** — invoke the agent (e.g. `@wos-etl-hotspot` / the agent picker, or ask the main loop to use it) and provide the four paths:
+**Host behavior:**
+
+- **ARM64 host** — auto-captures the trace with WPR (needs an elevated shell), re-profiles after optimizing, and reports measured before/after speedups.
+- **x64 host** — cross-builds ARM64 binaries but cannot run them, so it **asks for an ARM64-captured `.etl`** and defers post-optimization re-profiling to a native ARM64 rerun (prints the exact commands).
+
+**How to run** — invoke the agent (e.g. the agent picker, or ask the main loop to use it) and provide the project path:
 
 ```
-Use the wos-etl-hotspot agent to analyze this ETL trace and vectorize the hotspots.
-exe: C:\build\sqlite3.exe
-pdb: C:\build\sqlite3.pdb
-etl: C:\traces\query-scenario.etl
-source: C:\src\sqlite
+Use the wos-etl-hotspot agent to optimize the hotspots in C:\src\sqlite for ARM64.
+workload: sqlite3.exe bench.db < queries.sql
 ```
 
-The agent runs `${CLAUDE_PLUGIN_ROOT}/etl_hotspot_tool/hotspot_analysis.py`, ranks the top 5 source-matched functions, vectorizes them and their dependent callees behind ARM64 guards, and prints a before/after report. Build and review the changes yourself afterward.
+The agent runs `${CLAUDE_PLUGIN_ROOT}/etl_hotspot_tool/hotspot_analysis.py` (`build` → `capture` → analyze → `compare`), ranks the top 5 source-matched hotspots, optimizes them behind ARM64 guards, validates via re-profiling, and prints a before/after report with commit hashes.
 
 **Additional prerequisites** (beyond those above):
 
 - **Python 3** on PATH (`py -3`, `python`, or `python3`).
-- **Windows Performance Toolkit** tools the script drives — `symcachegen.exe` and `wpaexporter.exe` (from the Windows ADK / WPT). These are user-provided; the plugin does not bundle them.
-- The `.exe` and `.pdb` must be from the **same build**, with the `.pdb` co-located with (or discoverable next to) the `.exe`.
+- **Windows Performance Toolkit** — `symcachegen.exe`, `wpaexporter.exe`, and (for capture on ARM64) `wpr.exe`, from the Windows ADK / WPT. User-provided; not bundled.
+- **Elevation** for WPR capture on an ARM64 host.
+- A working **ARM64 build toolchain** (MSVC v143 ARM64 + Windows 11 SDK) so the agent can build the project.
 
 ## Uninstall
 

@@ -82,21 +82,46 @@ import pandas as pd
 # WPT Tools - Local Cache
 # =============================================================================
 
-WPT_NETWORK_PATH = r"\\blrsweng1\winmblr_performance4\Niranjan\App_compat_scrum\Qgeine\30_6_2026\WindowsPerformanceToolkit"
+# WPT tools source. Prefer tools already on PATH or in the standard Windows Kits
+# install; only fall back to a share when neither is present. Both the share and
+# a direct local WPT folder are overridable via environment variables so the tool
+# is not tied to any one corp network location:
+#   WOS_WPT_DIR  — a local Windows Performance Toolkit folder to use directly.
+#   WOS_WPT_PATH — a (possibly network) folder to copy WPT tools from into a cache.
+DEFAULT_WPT_NETWORK_PATH = r"\\blrsweng1\winmblr_performance4\Niranjan\App_compat_scrum\Qgeine\30_6_2026\WindowsPerformanceToolkit"
+WPT_NETWORK_PATH = os.environ.get("WOS_WPT_PATH", DEFAULT_WPT_NETWORK_PATH)
 WPT_LOCAL_CACHE = os.path.join(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()),
                                "WPA_HotspotTool", "WindowsPerformanceToolkit")
 
+STANDARD_WPT_DIRS = [
+    r"C:\Program Files (x86)\Windows Kits\10\Windows Performance Toolkit",
+    r"C:\Program Files\Windows Kits\10\Windows Performance Toolkit",
+]
+
+
+def _dir_has_wpt(d):
+    return bool(d) and os.path.isdir(d) and os.path.exists(os.path.join(d, "wpaexporter.exe"))
+
 
 def ensure_wpt_tools_local():
+    # 1) explicit local override
+    env_dir = os.environ.get("WOS_WPT_DIR")
+    if _dir_has_wpt(env_dir):
+        return env_dir
+    # 2) already cached
     marker = os.path.join(WPT_LOCAL_CACHE, ".copied")
     if os.path.exists(marker):
         return WPT_LOCAL_CACHE
-
+    # 3) standard Windows Kits install
+    for d in STANDARD_WPT_DIRS:
+        if _dir_has_wpt(d):
+            return d
+    # 4) copy from the (possibly network) share into a local cache
     if not os.path.isdir(WPT_NETWORK_PATH):
-        print(f"WARNING: WPT network path not accessible: {WPT_NETWORK_PATH}")
-        print("Falling back to network path (may fail with DLL errors).")
+        print(f"WARNING: WPT source not accessible: {WPT_NETWORK_PATH}")
+        print("Set WOS_WPT_DIR to a local Windows Performance Toolkit folder, or")
+        print("install the Windows ADK/WPT so wpaexporter.exe/wpr.exe are on PATH.")
         return WPT_NETWORK_PATH
-
     print(f"Copying WPT tools to local cache: {WPT_LOCAL_CACHE}")
     print("(This is a one-time operation...)")
     if os.path.exists(WPT_LOCAL_CACHE):
@@ -645,7 +670,11 @@ def run_symcache_step(modules_dir, sympath, symcache_dir=SYMCACHE_DIR, verbose=T
     return succeeded > 0
 
 
-def run_export_step(etl_path):
+def run_export_step(etl_path, out_csv=None):
+    """Export CPU-sampling data from an ETL to CSV via wpaexporter. When out_csv
+    is given, the freshly generated CSV is copied there — this lets callers keep
+    a baseline and a post-optimization CSV side by side without the two exports
+    (which both land in the ETL's folder) overwriting or shadowing each other."""
     print("\n[Step 2/3] Running wpaexporter...")
 
     wpaexporter = find_wpt_tool("wpaexporter.exe")
@@ -655,6 +684,9 @@ def run_export_step(etl_path):
 
     profile_path = get_wpa_profile_path()
     output_folder = os.path.dirname(os.path.abspath(etl_path))
+    # Snapshot pre-existing CSVs so we can identify the one THIS run produces,
+    # rather than blindly grabbing csv_files[0] (which may be a stale/other CSV).
+    before = {f for f in os.listdir(output_folder) if f.lower().endswith('.csv')}
     cmd = [wpaexporter, "-i", etl_path, "-profile", profile_path,
            "-outputfolder", output_folder, "-symbols"]
 
@@ -667,12 +699,20 @@ def run_export_step(etl_path):
             print(result.stderr)
         sys.exit(1)
 
-    csv_files = [f for f in os.listdir(output_folder) if f.lower().endswith('.csv')]
-    if not csv_files:
+    after = [f for f in os.listdir(output_folder) if f.lower().endswith('.csv')]
+    new_csvs = [f for f in after if f not in before]
+    chosen = new_csvs[0] if new_csvs else (after[0] if after else None)
+    if not chosen:
         print("No CSV files generated.")
         sys.exit(1)
 
-    csv_path = os.path.join(output_folder, csv_files[0])
+    csv_path = os.path.join(output_folder, chosen)
+    if out_csv:
+        out_csv = os.path.abspath(out_csv)
+        if os.path.abspath(csv_path) != out_csv:
+            os.makedirs(os.path.dirname(out_csv) or ".", exist_ok=True)
+            shutil.copy2(csv_path, out_csv)
+        csv_path = out_csv
     print(f"Generated: {csv_path}")
     return csv_path
 
@@ -875,6 +915,277 @@ def check_exit(user_input):
         sys.exit(0)
 
 
+# =============================================================================
+# Toolchain / Build / Capture / Compare  (project -> exe+pdb -> etl -> validate)
+# =============================================================================
+
+TOOLCHAIN_CACHE_REL = r".copilot\state\wos-toolchain.json"
+
+
+def load_toolchain(project_dir):
+    """Read the wos-toolchain-discovery cache (host arch + cl/msbuild/dumpbin/vcvars).
+    The wos-etl-hotspot agent runs toolchain discovery first, so the cache should
+    exist under <project>\\.copilot\\state\\wos-toolchain.json."""
+    import json
+    cache = os.path.join(project_dir, TOOLCHAIN_CACHE_REL)
+    if not os.path.exists(cache):
+        raise FileNotFoundError(
+            f"Toolchain cache not found: {cache}\n"
+            "Run the wos-toolchain-discovery skill first so this file is populated."
+        )
+    with open(cache, "r", encoding="utf-8") as f:
+        tc = json.load(f)
+    for key in ("hostArch", "msbuild", "dumpbin"):
+        if not tc.get(key):
+            raise ValueError(f"Toolchain cache missing '{key}': {cache}")
+    return tc
+
+
+def detect_build_system(project_dir):
+    """Return ('msbuild'|'cmake'|None, primary_target_path)."""
+    slns = list(Path(project_dir).rglob("*.sln"))
+    if slns:
+        return "msbuild", str(slns[0])
+    vcxprojs = list(Path(project_dir).rglob("*.vcxproj"))
+    if vcxprojs:
+        return "msbuild", str(vcxprojs[0])
+    if os.path.exists(os.path.join(project_dir, "CMakeLists.txt")):
+        return "cmake", os.path.join(project_dir, "CMakeLists.txt")
+    return None, None
+
+
+def run_in_vcvars(vcvars, inner_cmd, cwd):
+    """Run a command inside the MSVC developer environment. Building ARM64 with
+    cl/msbuild/cmake requires INCLUDE/LIB/PATH set by vcvars*.bat — invoking the
+    tools bare (as a plain subprocess) usually fails to find headers/libs. We
+    source vcvars and chain the real command in a single cmd.exe /c."""
+    quoted = subprocess.list2cmdline(inner_cmd)
+    full = f'"{vcvars}" && {quoted}'
+    return subprocess.run(["cmd", "/c", full], cwd=cwd)
+
+
+def run_build(project_dir, config="RelWithDebInfo", platform="ARM64"):
+    """Build the project for ARM64 WITH PDBs. Returns modules_dir (folder holding
+    the built .exe + .pdb). PDB generation is forced because symbol resolution in
+    the analyze step needs it; a plain Release build often omits it."""
+    print("\n[build] Detecting build system...")
+    tc = load_toolchain(project_dir)
+    vcvars = tc.get("vcvars")
+    if not vcvars or not os.path.exists(vcvars):
+        print(f"ERROR: vcvars script not found in toolchain cache: {vcvars}")
+        print("Re-run the wos-toolchain-discovery skill to populate it.")
+        sys.exit(1)
+    bs, target = detect_build_system(project_dir)
+    if not bs:
+        print("ERROR: no supported build system found (.sln/.vcxproj/CMakeLists.txt).")
+        sys.exit(1)
+    print(f"  build system: {bs}   target: {target}")
+    print(f"  vcvars: {vcvars}")
+
+    if bs == "msbuild":
+        msbuild = tc["msbuild"]
+        # /p:DebugType=full + /p:DebugSymbols=true force PDB emission for Release-like builds.
+        cmd = [msbuild, target, "/t:Build",
+               f"/p:Configuration=Release", f"/p:Platform={platform}",
+               "/p:DebugType=full", "/p:DebugSymbols=true", "/m"]
+        print(f"  {' '.join(cmd)}")
+        r = run_in_vcvars(vcvars, cmd, project_dir)
+        if r.returncode != 0:
+            print(f"ERROR: msbuild failed (exit {r.returncode}).")
+            sys.exit(1)
+    else:  # cmake
+        arch_flag = "ARM64" if platform.upper() == "ARM64" else platform
+        build_dir = os.path.join(project_dir, "build-arm64")
+        cfg = [
+            "cmake", "-S", project_dir, "-B", build_dir, "-A", arch_flag,
+            f"-DCMAKE_BUILD_TYPE={config}",
+        ]
+        print(f"  {' '.join(cfg)}")
+        if run_in_vcvars(vcvars, cfg, project_dir).returncode != 0:
+            print("ERROR: cmake configure failed."); sys.exit(1)
+        bld = ["cmake", "--build", build_dir, "--config", config, "--parallel"]
+        print(f"  {' '.join(bld)}")
+        if run_in_vcvars(vcvars, bld, project_dir).returncode != 0:
+            print("ERROR: cmake build failed."); sys.exit(1)
+
+    # Locate built .exe + .pdb (co-located). Prefer a folder containing both.
+    exes = [p for p in Path(project_dir).rglob("*.exe")]
+    modules = None
+    for exe in exes:
+        if list(exe.parent.glob("*.pdb")):
+            modules = str(exe.parent)
+            break
+    if not modules and exes:
+        modules = str(exes[0].parent)
+    if not modules:
+        print("ERROR: no built .exe found after build.")
+        sys.exit(1)
+    print(f"  modules_dir (exe + pdb): {modules}")
+
+    # Validate ARM64 machine type with dumpbin (AA64).
+    dumpbin = tc.get("dumpbin")
+    if dumpbin and os.path.exists(dumpbin):
+        for exe in Path(modules).glob("*.exe"):
+            out = subprocess.run([dumpbin, "/HEADERS", str(exe)],
+                                 capture_output=True, text=True).stdout
+            tag = "AA64" if "AA64" in out or "ARM64" in out else "NOT-ARM64"
+            print(f"  dumpbin {exe.name}: {tag}")
+
+    # Verify each built exe has a MATCHING co-located PDB. The exe's debug
+    # directory names the exact pdb (name + GUID/age); a stale or absent PDB in
+    # modules_dir means symbol resolution — and therefore hotspot naming — will
+    # silently fail later. Warn per-exe so the agent can rebuild rather than
+    # profile an unresolvable binary.
+    for exe in Path(modules).glob("*.exe"):
+        try:
+            pdb_name, guid, age = read_debug_info_from_pe(str(exe))
+        except (ValueError, OSError):
+            print(f"  WARNING: {exe.name} has no debug directory — no PDB emitted; "
+                  f"symbol resolution will fail. Ensure /Zi + /DEBUG (PDBs).")
+            continue
+        local_pdb = os.path.join(modules, pdb_name)
+        if os.path.exists(local_pdb):
+            print(f"  PDB match: {exe.name} -> {pdb_name} ({guid}{age:X})")
+        else:
+            print(f"  WARNING: {exe.name} expects '{pdb_name}' but it is NOT in "
+                  f"{modules} — symbol resolution may fail. Rebuild with PDBs.")
+    return modules
+
+
+def _is_admin():
+    try:
+        import ctypes
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        return False
+
+
+def detect_workload(modules_dir, target_exe):
+    """Auto-detect a workload command to exercise the app during tracing.
+    Priority: sibling bench/perf/test exe -> the target exe itself. Returns a
+    command list. The last-resort (target exe, no args) is flagged presumed-invalid."""
+    cand = []
+    for exe in Path(modules_dir).glob("*.exe"):
+        name = exe.stem.lower()
+        if any(k in name for k in ("bench", "perf")):
+            cand.insert(0, (str(exe), [], "benchmark"))
+        elif "test" in name:
+            cand.append((str(exe), [], "test"))
+    if cand:
+        exe, args, kind = cand[0]
+        return [exe] + args, kind, True
+    # last resort: run the target exe with no args (presumed unrepresentative)
+    return [target_exe], "target-noargs", False
+
+
+def run_capture(exe, out_etl, workload=None, hostArch=None, project_dir=None, timeout=300):
+    """Capture a CPU ETL trace on ARM64. On x64 hosts, refuses and asks for an
+    ARM64-captured ETL instead (can't execute ARM64 binaries to profile them).
+    `timeout` bounds the workload run (seconds); tune it for long benchmarks."""
+    if hostArch and hostArch.upper() != "ARM64":
+        print("=" * 70)
+        print("x64 HOST: cannot capture a representative ARM64 trace here.")
+        print("Provide an ARM64-captured .etl for THIS build via --etl, or run on")
+        print("a native ARM64 device:")
+        print(f'  wpr -start CPU -filemode')
+        print(f'  <run your workload against {os.path.basename(exe)}>')
+        print(f'  wpr -stop "{out_etl}"')
+        print("=" * 70)
+        sys.exit(2)
+
+    wpr = find_wpt_tool("wpr.exe") or "wpr.exe"
+    if not _is_admin():
+        print("ERROR: WPR capture requires an elevated (Administrator) shell.")
+        print("Re-run this command from an elevated terminal.")
+        sys.exit(1)
+
+    modules_dir = os.path.dirname(os.path.abspath(exe))
+    if workload:
+        wl_cmd = workload if isinstance(workload, list) else [workload]
+        wl_kind, representative = "user-supplied", True
+    else:
+        wl_cmd, wl_kind, representative = detect_workload(modules_dir, exe)
+    print(f"[capture] workload ({wl_kind}): {' '.join(wl_cmd)}")
+    if not representative:
+        print("WARNING: no benchmark/test found — this trace may NOT represent real")
+        print("         work. Pass --workload \"<cmd>\" for meaningful hotspots.")
+
+    subprocess.run([wpr, "-cancel"], capture_output=True)  # clear any stale session
+    if subprocess.run([wpr, "-start", "CPU", "-filemode"]).returncode != 0:
+        print("ERROR: wpr -start failed."); sys.exit(1)
+    try:
+        subprocess.run(wl_cmd, cwd=modules_dir, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        print(f"[capture] workload hit the {timeout}s timeout — stopping trace.")
+    except (OSError, FileNotFoundError) as e:
+        subprocess.run([wpr, "-cancel"], capture_output=True)
+        print(f"ERROR: workload failed to run: {e}"); sys.exit(1)
+    if subprocess.run([wpr, "-stop", out_etl]).returncode != 0:
+        print("ERROR: wpr -stop failed."); sys.exit(1)
+    print(f"[capture] wrote {out_etl}")
+    return out_etl
+
+
+def assert_trace_representative(etl_path, min_kb=100):
+    """Cheap first gate: reject an obviously idle/empty ETL by size before export."""
+    if not os.path.exists(etl_path):
+        print(f"ERROR: ETL not found: {etl_path}"); sys.exit(1)
+    kb = os.path.getsize(etl_path) / 1024.0
+    if kb < min_kb:
+        print(f"ERROR: ETL is only {kb:.0f} KB (< {min_kb} KB) — likely idle or too")
+        print("       short to contain CPU samples. Provide a real workload / trace.")
+        sys.exit(1)
+    print(f"[gate] ETL size OK: {kb:.0f} KB")
+
+
+def assert_csv_representative(df, process_hint=None, min_rows=100):
+    """Stronger gate on the exported CSV (real sample data, not just file size):
+    require a floor of CPU-sample rows, and — if the target exe is known — that
+    its process actually appears in the trace. This is what stops us from ranking
+    'hotspots' out of an idle or wrong-process capture."""
+    total = len(df)
+    if total < min_rows:
+        print(f"ERROR: trace has only {total} CPU-sample rows (< {min_rows}). The run")
+        print("       was likely idle or too short. Provide a real --workload, or a")
+        print("       longer/representative ARM64 trace, and retry.")
+        sys.exit(1)
+    if process_hint:
+        stem = os.path.splitext(os.path.basename(process_hint))[0].lower()
+        procs = {str(p).lower() for p in df['Process'].unique()}
+        if not any(stem in p for p in procs):
+            print(f"WARNING: target process '{stem}' not found among traced processes:")
+            print("         " + ", ".join(sorted(procs)[:12]))
+            print("         The workload may not have exercised the built binary.")
+    print(f"[gate] trace has {total} CPU-sample rows across "
+          f"{len(df['Process'].unique())} processes")
+
+
+def run_compare(before_csv, after_csv, source_dir=None, top_n=50):
+    """Diff per-function CPU weight between a baseline and post-optimization CSV."""
+    print("\n[compare] baseline vs post-optimization")
+    before = load_csv(before_csv)
+    after = load_csv(after_csv)
+
+    def weight_by_func(df):
+        if 'Weight (in view)' in df.columns:
+            df = df.copy()
+            df['Weight (in view)'] = pd.to_numeric(df['Weight (in view)'], errors='coerce').fillna(0)
+            return df.groupby('Function')['Weight (in view)'].sum()
+        return df.groupby('Function').size()
+
+    wb, wa = weight_by_func(before), weight_by_func(after)
+    funcs = sorted(set(wb.index) | set(wa.index),
+                   key=lambda f: wb.get(f, 0), reverse=True)[:top_n]
+    print(f"\n{'Function':<40} {'Before':>12} {'After':>12} {'Delta %':>10}")
+    print("-" * 76)
+    for f in funcs:
+        b, a = float(wb.get(f, 0)), float(wa.get(f, 0))
+        delta = ((a - b) / b * 100) if b else 0.0
+        fn = str(f)[:39]
+        print(f"{fn:<40} {b:>12.1f} {a:>12.1f} {delta:>9.1f}%")
+    print("-" * 76)
+
+
 def prompt_path(prompt_msg, must_exist=True, is_dir=False):
     while True:
         path = input(prompt_msg).strip().strip('"').strip("'")
@@ -906,28 +1217,83 @@ def prompt_choice(options, prompt_msg="Select an option"):
 
 
 def main():
+    # Subcommand dispatch. Back-compat: if the first token isn't a known
+    # subcommand, fall through to the legacy `analyze` pipeline so existing
+    # invocations (positional modules_dir + etl) keep working unchanged.
+    SUBCOMMANDS = {"analyze", "build", "capture", "compare"}
+    argv = sys.argv[1:]
+    sub = argv[0] if argv and argv[0] in SUBCOMMANDS else "analyze"
+    rest = argv[1:] if (argv and argv[0] in SUBCOMMANDS) else argv
+
+    if sub == "build":
+        p = argparse.ArgumentParser(prog="hotspot_analysis.py build")
+        p.add_argument("project_dir")
+        p.add_argument("--config", default="RelWithDebInfo")
+        p.add_argument("--platform", default="ARM64")
+        a = p.parse_args(rest)
+        modules = run_build(a.project_dir, a.config, a.platform)
+        print(f"\nMODULES_DIR={modules}")
+        return
+
+    if sub == "capture":
+        p = argparse.ArgumentParser(prog="hotspot_analysis.py capture")
+        p.add_argument("exe")
+        p.add_argument("--out", required=True, help="output .etl path")
+        p.add_argument("--workload", help="command to exercise the app (quoted)")
+        p.add_argument("--project-dir", help="project dir for toolchain host-arch lookup")
+        p.add_argument("--timeout", type=int, default=300,
+                       help="max seconds to run the workload during tracing (default: 300)")
+        a = p.parse_args(rest)
+        hostArch = None
+        if a.project_dir:
+            try:
+                hostArch = load_toolchain(a.project_dir).get("hostArch")
+            except (FileNotFoundError, ValueError):
+                pass
+        wl = a.workload.split() if a.workload else None
+        run_capture(a.exe, a.out, workload=wl, hostArch=hostArch,
+                    project_dir=a.project_dir, timeout=a.timeout)
+        assert_trace_representative(a.out)
+        return
+
+    if sub == "compare":
+        p = argparse.ArgumentParser(prog="hotspot_analysis.py compare")
+        p.add_argument("before_csv")
+        p.add_argument("after_csv")
+        p.add_argument("--source-dir", "-s")
+        p.add_argument("--top", "-n", type=int, default=50)
+        a = p.parse_args(rest)
+        run_compare(a.before_csv, a.after_csv, a.source_dir, a.top)
+        return
+
+    # --- sub == "analyze": legacy pipeline (unchanged behavior) ---
+    cmd_analyze(rest)
+
+
+def cmd_analyze(argv):
     parser = argparse.ArgumentParser(
+        prog="hotspot_analysis.py [analyze]",
         description="WPA Hotspot Tool - Generate SymCache, export ETL, analyze CPU hotspots",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+Subcommands:
+  build    <project_dir> [--config RelWithDebInfo] [--platform ARM64]
+  capture  <exe> --out <etl> [--workload "<cmd>"] [--project-dir <dir>]
+  compare  <before.csv> <after.csv> [--source-dir <src>]
+  analyze  (default) — the classic modules_dir + etl -> hotspot pipeline
+
 Examples:
-  # Full pipeline (interactive prompts for missing inputs)
-  python hotspot_tool_cli.py
+  # Cross-reference hotspots against source code (default analyze mode)
+  python hotspot_analysis.py C:\\modules trace.etl --source-dir C:\\src\\ffmpeg
 
-  # Full pipeline with all args
-  python hotspot_tool_cli.py C:\\modules trace.etl --process myapp.exe --module ntdll.dll
+  # Build a project for ARM64 with PDBs
+  python hotspot_analysis.py build C:\\src\\zlib
 
-  # Cross-reference hotspots against source code
-  python hotspot_tool_cli.py C:\\modules trace.etl --source-dir C:\\src\\ffmpeg --process ffmpeg.exe
+  # Capture a CPU trace (ARM64 host, elevated)
+  python hotspot_analysis.py capture C:\\src\\zlib\\build\\minigzip.exe --out base.etl
 
-  # Analyze an existing CSV against source code
-  python hotspot_tool_cli.py --csv output.csv --source-dir C:\\src\\ffmpeg
-
-  # Analyze an existing CSV directly
-  python hotspot_tool_cli.py --csv output.csv --process myapp.exe --module ntdll.dll
-
-  # Show top 100 functions
-  python hotspot_tool_cli.py C:\\modules trace.etl --process myapp.exe --module ntdll.dll --top 100
+  # Compare before/after CSVs
+  python hotspot_analysis.py compare base.csv post.csv
 """)
 
     parser.add_argument("modules_dir", nargs="?", help="Folder containing modules (.exe/.dll and .pdbs)")
@@ -942,8 +1308,10 @@ Examples:
     parser.add_argument("--symcache-dir", default=SYMCACHE_DIR, help=f"SymCache directory (default: {SYMCACHE_DIR})")
     parser.add_argument("--symbol-path", default=SYMBOL_PATH, help="Symbol path override")
     parser.add_argument("--source-dir", "-s", help="Source code directory to match hotspot functions against")
+    parser.add_argument("--out-csv", help="Copy the exported CSV to this explicit path (keeps baseline vs post CSVs distinct for `compare`)")
+    parser.add_argument("--verify-process", help="Warn if this process (e.g. app.exe) is absent from the trace — guards against tracing the wrong/idle process")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     symcache_dir = args.symcache_dir
     os.makedirs(symcache_dir, exist_ok=True)
@@ -1009,7 +1377,7 @@ Examples:
 
         # Step 2: Export
         if not args.skip_export:
-            csv_path = run_export_step(etl_path)
+            csv_path = run_export_step(etl_path, out_csv=args.out_csv)
         else:
             output_folder = os.path.dirname(os.path.abspath(etl_path))
             csv_files = [f for f in os.listdir(output_folder) if f.lower().endswith('.csv')]
@@ -1021,6 +1389,7 @@ Examples:
 
     # --- Load and analyze ---
     df = load_csv(csv_path)
+    assert_csv_representative(df, process_hint=args.verify_process)
 
     processes = sorted(df['Process'].unique())
     print(f"\nComparing all {len(processes)} processes against source code...")
