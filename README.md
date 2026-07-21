@@ -25,6 +25,7 @@ Give it a GitHub repository URL and it will:
 | `wos-builder` | Builds, validates binaries with dumpbin, and fixes build errors |
 | `wos-tester` | Runs and fixes ARM64 test suites and benchmarks |
 | `wos-optimizer` | Applies hand-written ARM NEON intrinsics to hot kernels for performance |
+| `wos-etl-hotspot` | **Standalone.** Analyzes an ETL trace of a built app to find the CPU-hottest functions, then applies ARM64 vector-extension optimizations (NEON/SVE/SVE2/SME) to those hotspots. Does not build/test/commit. |
 
 ## Included Instructions
 
@@ -141,6 +142,40 @@ You can also invoke individual agents directly:
 - `wos-builder` — Build and validate an already-ported project
 - `wos-tester` — Run and fix ARM64 test suites and benchmarks
 - `wos-optimizer` — Apply ARM NEON intrinsics to hot kernels
+
+### ETL Hotspot Vectorization (`wos-etl-hotspot`)
+
+A **standalone** agent — separate from the porting pipeline. Give it a *representative ETL trace* of your already-built app and it will find the functions that actually dominate that workload, then apply ARM64 vector-extension optimizations (**NEON / SVE / SVE2 / SME** only) to those hotspots and their in-source callees. It **writes the edits and stops** — it does not build, test, or commit.
+
+**Required inputs — you must provide all four** (the agent asks for any that are missing; it never guesses paths):
+
+| Input | What it is | Example |
+|---|---|---|
+| `.exe` path | The built application executable | `C:\build\sqlite3.exe` |
+| `.pdb` path | Matching PDB file **or** a folder of PDBs (same build as the `.exe`) | `C:\build\sqlite3.pdb` |
+| `.etl` path | An ETL trace of a **real** workload scenario (not idle/synthetic) | `C:\traces\scenario.etl` |
+| Source directory | Root of the application source tree | `C:\src\sqlite` |
+
+**How to run:**
+
+1. Select the **wos-etl-hotspot** agent in Copilot Chat.
+2. Provide the four paths, e.g.:
+
+   ```
+   Analyze this ETL trace and vectorize the hotspots.
+   exe: C:\build\sqlite3.exe
+   pdb: C:\build\sqlite3.pdb
+   etl: C:\traces\query-scenario.etl
+   source: C:\src\sqlite
+   ```
+
+The agent runs `etl_hotspot_tool/hotspot_analysis.py` (SymCache → `wpaexporter` export → source cross-reference), ranks the top 5 source-matched functions, vectorizes them and their dependent callees behind ARM64 guards, and prints a before/after report. Build and review the changes yourself afterward.
+
+**Additional prerequisites** (beyond the [Requirements](#requirements) above):
+
+- **Python 3** on PATH (`py -3`, `python`, or `python3`).
+- **Windows Performance Toolkit** tools the script drives — `symcachegen.exe` and `wpaexporter.exe` (from the Windows ADK / WPT). These are user-provided; the extension does not bundle them.
+- The `.exe` and `.pdb` must be from the **same build**, and the `.pdb` co-located with (or discoverable next to) the `.exe`.
 
 ## Using It in Claude Code (plugin)
 

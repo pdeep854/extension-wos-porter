@@ -29,6 +29,10 @@ tsconfig.json
 # Packaged output artefacts
 *.vsix
 
+# Python build artefacts (never ship compiled bytecode)
+**/__pycache__/**
+**/*.pyc
+
 # Claude Code plugin packaging (installed via the Claude Code marketplace from
 # GitHub, not used by the VS Code extension at runtime)
 claude-plugin/**

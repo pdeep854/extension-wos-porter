@@ -17,6 +17,13 @@ const AGENT_FILES = [
     'wos-builder.agent.md',
     'wos-tester.agent.md',
     'wos-optimizer.agent.md',
+    'wos-etl-hotspot.agent.md',
+];
+
+// Tool folders installed under ~/.copilot/agents/<name>/ (keep in sync with
+// AGENT_TOOL_DIRS in src/extension.ts).
+const AGENT_TOOL_DIRS = [
+    'etl_hotspot_tool',
 ];
 
 const INSTRUCTION_FILES = [
@@ -92,6 +99,7 @@ try {
     const promptsDst      = path.join(home, 'prompts');
 
     for (const f of AGENT_FILES)       { tryUnlink(safeJoin(agentsDst, f)); }
+    for (const d of AGENT_TOOL_DIRS)   { tryRmDirRecursive(safeJoin(agentsDst, d)); }
     for (const f of INSTRUCTION_FILES) { tryUnlink(safeJoin(instructionsDst, f)); }
     for (const d of SKILL_DIRS)        { tryRmDirRecursive(safeJoin(skillsDst, d)); }
     for (const f of PROMPT_FILES)      { tryUnlink(safeJoin(promptsDst, f)); }
