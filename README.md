@@ -152,13 +152,14 @@ A **standalone** agent — separate from the porting pipeline. Give it a **proje
 | Input | Required? | What it is | Example |
 |---|---|---|---|
 | Project directory | **Always** | Application source root (`.sln`/`.vcxproj`/`CMakeLists.txt`) | `C:\src\sqlite` |
-| Workload | Optional | Command to exercise the app during tracing (else auto-detected) | `bench.exe input.dat` |
+| Scenario | Optional | Plain-language description of what to profile; the agent derives a workload command for the project. If omitted, the agent picks a representative scenario itself. | `heavy INSERT load` |
+| Workload | Optional | Explicit command to exercise the app during tracing (takes precedence over scenario) | `bench.exe input.dat` |
 | ARM64 `.etl` trace | **Only on an x64 host** | A CPU trace captured on a native ARM64 device for this build | `C:\traces\scenario.etl` |
 
 **Host behavior:**
 
-- **ARM64 host** — the agent auto-captures the trace with WPR (needs an elevated shell), re-profiles after optimizing, and reports measured before/after speedups.
-- **x64 host** — the agent cross-builds ARM64 binaries but cannot run them, so it **asks for an ARM64-captured `.etl`** and defers post-optimization re-profiling to a native ARM64 rerun (it prints the exact commands).
+- **ARM64 host** — the agent auto-captures the trace with WPR (needs an elevated shell), and after optimizing **re-runs the workload to measure the wall-clock speedup** (`bench` before vs. after); it reports the measured runtime change and keeps a change only when it measurably helps.
+- **x64 host** — the agent cross-builds ARM64 binaries but cannot run them, so it **asks for an ARM64-captured `.etl`** and defers the runtime measurement to a native ARM64 rerun (it prints the exact `bench` commands).
 
 **How to run:**
 
@@ -170,7 +171,7 @@ A **standalone** agent — separate from the porting pipeline. Give it a **proje
    workload: sqlite3.exe bench.db < queries.sql
    ```
 
-The agent runs `etl_hotspot_tool/hotspot_analysis.py` (`build` → `capture` → analyze → `compare`), ranks the top 5 source-matched hotspots, optimizes them behind ARM64 guards, validates via re-profiling, and prints a before/after report with commit hashes.
+The agent runs `etl_hotspot_tool/hotspot_analysis.py` (`build` → `capture` → analyze → `bench` → `compare`), ranks the top 5 source-matched hotspots, optimizes them behind ARM64 guards, and **validates each change by the workload's measured wall-clock speedup** (`bench` before vs. after) — not by shifts in per-function sample weight, which are relative and can mislead. It reverts changes that don't measurably help, then writes **`<project_dir>\ARM64-HOTSPOT-REPORT.md`** — hotspot function details, a per-change optimization explanation (with before/after code and the correctness argument), and a performance comparison led by the **measured before/after runtime and speedup**, with the per-function CPU-weight shift kept as a supporting diagnostic, plus commit hashes. A short console summary points at the file.
 
 **Additional prerequisites** (beyond the [Requirements](#requirements) above):
 

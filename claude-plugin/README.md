@@ -6,7 +6,7 @@ This is the Claude Code packaging of the `wos-porter` VS Code extension — the 
 
 ## What's inside
 
-- **commands/** — `/wos-porter:wos-porter <repo-url>` — the entry-point orchestrator that runs the 8-phase pipeline in the main loop.
+- **commands/** — `/wos-porter:wos-porter <repo-url>` — the entry-point orchestrator that runs the 8-phase pipeline in the main loop; and `/wos-porter:wos-etl-hotspot <project-dir>` — the standalone ETL hotspot-optimization loop (see [ETL Hotspot Optimization](#etl-hotspot-optimization-wos-etl-hotspot)).
 - **agents/** — the `wos-porter` pipeline instructions plus 6 sub-agents (`wos-analyzer`, `wos-build-porter`, `wos-code-porter`, `wos-builder`, `wos-tester`, `wos-optimizer`) spawned by the orchestrator, and the standalone `wos-etl-hotspot` agent (see [ETL Hotspot Optimization](#etl-hotspot-optimization-wos-etl-hotspot)).
 - **prompts/** — `wos-verify-port.prompt.md`, the Phase 8 verification gate the orchestrator reads and runs inline.
 - **skills/** — 11 auto-loading skills (NEON reference, toolchain discovery, SSE/AVX→NEON translation, build-error recipes, WoA dashboard, etc.).
@@ -149,22 +149,37 @@ A **standalone** agent, separate from the porting pipeline. Give it a **project 
 | Input | Required? | What it is | Example |
 |---|---|---|---|
 | Project directory | **Always** | Application source root (`.sln`/`.vcxproj`/`CMakeLists.txt`) | `C:\src\sqlite` |
-| Workload | Optional | Command to exercise the app during tracing (else auto-detected) | `bench.exe input.dat` |
+| Scenario | Optional | Plain-language description of what to profile; the agent derives a workload command for the project. If omitted, the agent picks a representative scenario itself. | `heavy INSERT load` |
+| Workload | Optional | Explicit command to exercise the app during tracing (takes precedence over scenario) | `bench.exe input.dat` |
 | ARM64 `.etl` trace | **Only on an x64 host** | A CPU trace captured on a native ARM64 device for this build | `C:\traces\scenario.etl` |
 
 **Host behavior:**
 
-- **ARM64 host** — auto-captures the trace with WPR (needs an elevated shell), re-profiles after optimizing, and reports measured before/after speedups.
-- **x64 host** — cross-builds ARM64 binaries but cannot run them, so it **asks for an ARM64-captured `.etl`** and defers post-optimization re-profiling to a native ARM64 rerun (prints the exact commands).
+- **ARM64 host** — auto-captures the trace with WPR (needs an elevated shell), and after optimizing **re-runs the workload to measure the wall-clock speedup** (`bench` before vs. after); it reports the measured runtime change and keeps a change only when it measurably helps.
+- **x64 host** — cross-builds ARM64 binaries but cannot run them, so it **asks for an ARM64-captured `.etl`** and defers the runtime measurement to a native ARM64 rerun (prints the exact `bench` commands).
 
-**How to run** — invoke the agent (e.g. the agent picker, or ask the main loop to use it) and provide the project path:
+**How to run** — the quickest way is the slash command, which takes the project directory plus an optional `scenario:` (agent derives the workload), `workload:` (explicit command), or `etl:`:
+
+```
+/wos-porter:wos-etl-hotspot C:\src\sqlite scenario: heavy INSERT load
+```
+
+```
+/wos-porter:wos-etl-hotspot C:\src\sqlite workload: sqlite3.exe bench.db < queries.sql
+```
+
+If you pass neither `scenario:` nor `workload:`, the agent inspects the project and picks a representative scenario itself.
+
+Or invoke the agent in natural language (agent picker, or ask the main loop to use it) and provide the project path:
 
 ```
 Use the wos-etl-hotspot agent to optimize the hotspots in C:\src\sqlite for ARM64.
 workload: sqlite3.exe bench.db < queries.sql
 ```
 
-The agent runs `${CLAUDE_PLUGIN_ROOT}/etl_hotspot_tool/hotspot_analysis.py` (`build` → `capture` → analyze → `compare`), ranks the top 5 source-matched hotspots, optimizes them behind ARM64 guards, validates via re-profiling, and prints a before/after report with commit hashes.
+> **Command vs. agent:** the plugin ships `wos-etl-hotspot` both as a subagent (shown under `/agents`, invoked in natural language) **and** as the `/wos-porter:wos-etl-hotspot` slash command above. Subagents do **not** appear in the `/` menu — use `/agents` to see them, or the command for a direct `/`-style entry point.
+
+The agent runs `${CLAUDE_PLUGIN_ROOT}/etl_hotspot_tool/hotspot_analysis.py` (`build` → `capture` → analyze → `bench` → `compare`), ranks the top 5 source-matched hotspots, optimizes them behind ARM64 guards, and **validates each change by the workload's measured wall-clock speedup** (`bench` before vs. after) — not by shifts in per-function sample weight, which are relative and can mislead. It reverts changes that don't measurably help, then writes **`<project_dir>\ARM64-HOTSPOT-REPORT.md`** — hotspot function details, a per-change optimization explanation (with before/after code and the correctness argument), and a performance comparison led by the **measured before/after runtime and speedup**, with the per-function CPU-weight shift kept as a supporting diagnostic, plus commit hashes. A short console summary points at the file.
 
 **Additional prerequisites** (beyond those above):
 

@@ -1078,10 +1078,13 @@ def detect_workload(modules_dir, target_exe):
     return [target_exe], "target-noargs", False
 
 
-def run_capture(exe, out_etl, workload=None, hostArch=None, project_dir=None, timeout=300):
+def run_capture(exe, out_etl, workload=None, hostArch=None, project_dir=None, timeout=300, scenario=None):
     """Capture a CPU ETL trace on ARM64. On x64 hosts, refuses and asks for an
     ARM64-captured ETL instead (can't execute ARM64 binaries to profile them).
-    `timeout` bounds the workload run (seconds); tune it for long benchmarks."""
+    `timeout` bounds the workload run (seconds); tune it for long benchmarks.
+    `scenario` is an optional human-readable label for what this trace exercises
+    (e.g. "heavy INSERT load") — printed for traceability; it does not change the
+    command that is run (that is `workload`)."""
     if hostArch and hostArch.upper() != "ARM64":
         print("=" * 70)
         print("x64 HOST: cannot capture a representative ARM64 trace here.")
@@ -1105,6 +1108,8 @@ def run_capture(exe, out_etl, workload=None, hostArch=None, project_dir=None, ti
         wl_kind, representative = "user-supplied", True
     else:
         wl_cmd, wl_kind, representative = detect_workload(modules_dir, exe)
+    if scenario:
+        print(f"[capture] scenario: {scenario}")
     print(f"[capture] workload ({wl_kind}): {' '.join(wl_cmd)}")
     if not representative:
         print("WARNING: no benchmark/test found — this trace may NOT represent real")
@@ -1186,6 +1191,112 @@ def run_compare(before_csv, after_csv, source_dir=None, top_n=50):
     print("-" * 76)
 
 
+def run_bench(workload, cwd=None, runs=5, warmup=1, timeout=600,
+              out_json=None, baseline_json=None, scenario=None):
+    """Measure the WALL-CLOCK runtime of the workload — the real question is
+    'did the workload get faster', not 'did a function's sample-% shift'.
+
+    Runs `warmup` untimed iterations, then `runs` timed iterations, and reports
+    min / median / mean / stdev of elapsed seconds. Writes the result to
+    `out_json` if given. If `baseline_json` is given, prints the measured speedup
+    (baseline median / current median) and the % runtime reduction — this is the
+    validation signal the agent should gate commits on. Returns the result dict."""
+    import time
+    import json
+    import statistics
+
+    if isinstance(workload, str):
+        workload = workload.split()
+    if not workload:
+        print("ERROR: bench requires a --workload command to time.")
+        sys.exit(1)
+
+    label = scenario or " ".join(workload)
+    print(f"\n[bench] scenario: {label}")
+    print(f"[bench] command : {' '.join(workload)}")
+    print(f"[bench] warmup={warmup} runs={runs} timeout={timeout}s cwd={cwd or os.getcwd()}")
+
+    def _one_run(kind, i):
+        start = time.perf_counter()
+        try:
+            proc = subprocess.run(workload, cwd=cwd, timeout=timeout,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            print(f"ERROR: workload exceeded the {timeout}s bench timeout on {kind} run {i}.")
+            print("       Increase --timeout, or use a smaller/representative input.")
+            sys.exit(1)
+        except (OSError, FileNotFoundError) as e:
+            print(f"ERROR: workload failed to run: {e}")
+            sys.exit(1)
+        elapsed = time.perf_counter() - start
+        if proc.returncode != 0:
+            print(f"ERROR: workload exited non-zero ({proc.returncode}) on {kind} run {i}.")
+            print("       A crashing/erroring workload cannot be timed meaningfully — fix it first.")
+            sys.exit(1)
+        return elapsed
+
+    for i in range(1, warmup + 1):
+        t = _one_run("warmup", i)
+        print(f"  warmup {i}/{warmup}: {t:.4f}s")
+
+    samples = []
+    for i in range(1, runs + 1):
+        t = _one_run("timed", i)
+        samples.append(t)
+        print(f"  run {i}/{runs}: {t:.4f}s")
+
+    result = {
+        "scenario": label,
+        "workload": workload,
+        "runs": runs,
+        "warmup": warmup,
+        "samples_s": samples,
+        "min_s": min(samples),
+        "median_s": statistics.median(samples),
+        "mean_s": statistics.fmean(samples),
+        "stdev_s": statistics.stdev(samples) if len(samples) > 1 else 0.0,
+    }
+    print(f"\n[bench] min={result['min_s']:.4f}s  median={result['median_s']:.4f}s  "
+          f"mean={result['mean_s']:.4f}s  stdev={result['stdev_s']:.4f}s")
+
+    if out_json:
+        with open(out_json, "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2)
+        print(f"[bench] wrote {out_json}")
+
+    if baseline_json:
+        try:
+            with open(baseline_json, "r", encoding="utf-8") as f:
+                base = json.load(f)
+        except (OSError, ValueError) as e:
+            print(f"WARNING: could not read baseline bench JSON ({e}); skipping speedup.")
+            return result
+        b_med = float(base.get("median_s", 0) or 0)
+        a_med = result["median_s"]
+        print("\n" + "=" * 60)
+        print("PERFORMANCE — baseline vs post-optimization (wall-clock)")
+        print("=" * 60)
+        print(f"  baseline median : {b_med:.4f}s")
+        print(f"  current  median : {a_med:.4f}s")
+        if b_med > 0 and a_med > 0:
+            speedup = b_med / a_med
+            reduction = (b_med - a_med) / b_med * 100.0
+            verdict = ("FASTER" if reduction > 0 else
+                       "SLOWER" if reduction < 0 else "UNCHANGED")
+            print(f"  speedup         : {speedup:.3f}x")
+            print(f"  runtime change  : {reduction:+.2f}%  ({verdict})")
+            # Flag results that are within noise so the agent doesn't over-claim.
+            noise = max(base.get("stdev_s", 0) or 0, result["stdev_s"]) / a_med * 100.0
+            if abs(reduction) < noise:
+                print(f"  NOTE: change ({reduction:+.2f}%) is within run-to-run noise "
+                      f"(~{noise:.2f}%); treat as inconclusive.")
+        else:
+            print("  speedup         : n/a (a median was zero)")
+        print("=" * 60)
+
+    return result
+
+
 def prompt_path(prompt_msg, must_exist=True, is_dir=False):
     while True:
         path = input(prompt_msg).strip().strip('"').strip("'")
@@ -1220,7 +1331,7 @@ def main():
     # Subcommand dispatch. Back-compat: if the first token isn't a known
     # subcommand, fall through to the legacy `analyze` pipeline so existing
     # invocations (positional modules_dir + etl) keep working unchanged.
-    SUBCOMMANDS = {"analyze", "build", "capture", "compare"}
+    SUBCOMMANDS = {"analyze", "build", "capture", "compare", "bench"}
     argv = sys.argv[1:]
     sub = argv[0] if argv and argv[0] in SUBCOMMANDS else "analyze"
     rest = argv[1:] if (argv and argv[0] in SUBCOMMANDS) else argv
@@ -1240,6 +1351,8 @@ def main():
         p.add_argument("exe")
         p.add_argument("--out", required=True, help="output .etl path")
         p.add_argument("--workload", help="command to exercise the app (quoted)")
+        p.add_argument("--scenario", help="human-readable label for what this trace "
+                       "exercises (e.g. \"heavy INSERT load\"); printed for traceability")
         p.add_argument("--project-dir", help="project dir for toolchain host-arch lookup")
         p.add_argument("--timeout", type=int, default=300,
                        help="max seconds to run the workload during tracing (default: 300)")
@@ -1252,7 +1365,7 @@ def main():
                 pass
         wl = a.workload.split() if a.workload else None
         run_capture(a.exe, a.out, workload=wl, hostArch=hostArch,
-                    project_dir=a.project_dir, timeout=a.timeout)
+                    project_dir=a.project_dir, timeout=a.timeout, scenario=a.scenario)
         assert_trace_representative(a.out)
         return
 
@@ -1264,6 +1377,25 @@ def main():
         p.add_argument("--top", "-n", type=int, default=50)
         a = p.parse_args(rest)
         run_compare(a.before_csv, a.after_csv, a.source_dir, a.top)
+        return
+
+    if sub == "bench":
+        p = argparse.ArgumentParser(prog="hotspot_analysis.py bench")
+        p.add_argument("--workload", required=True,
+                       help="command to time (quoted) — the workload whose wall-clock runtime is measured")
+        p.add_argument("--cwd", help="working directory to run the workload in")
+        p.add_argument("--runs", type=int, default=5, help="timed iterations (default: 5)")
+        p.add_argument("--warmup", type=int, default=1, help="untimed warmup iterations (default: 1)")
+        p.add_argument("--timeout", type=int, default=600,
+                       help="max seconds per iteration (default: 600)")
+        p.add_argument("--scenario", help="human-readable label for this workload")
+        p.add_argument("--out", help="write the timing result to this JSON path")
+        p.add_argument("--baseline",
+                       help="a prior bench --out JSON; prints measured speedup vs it")
+        a = p.parse_args(rest)
+        run_bench(a.workload, cwd=a.cwd, runs=a.runs, warmup=a.warmup,
+                  timeout=a.timeout, out_json=a.out, baseline_json=a.baseline,
+                  scenario=a.scenario)
         return
 
     # --- sub == "analyze": legacy pipeline (unchanged behavior) ---
@@ -1278,8 +1410,10 @@ def cmd_analyze(argv):
         epilog="""
 Subcommands:
   build    <project_dir> [--config RelWithDebInfo] [--platform ARM64]
-  capture  <exe> --out <etl> [--workload "<cmd>"] [--project-dir <dir>]
+  capture  <exe> --out <etl> [--workload "<cmd>"] [--scenario "<label>"] [--project-dir <dir>]
   compare  <before.csv> <after.csv> [--source-dir <src>]
+  bench    --workload "<cmd>" [--runs N] [--warmup N] [--out r.json] [--baseline base.json]
+           measure the workload's wall-clock runtime; with --baseline, print the real speedup
   analyze  (default) — the classic modules_dir + etl -> hotspot pipeline
 
 Examples:
@@ -1294,6 +1428,10 @@ Examples:
 
   # Compare before/after CSVs
   python hotspot_analysis.py compare base.csv post.csv
+
+  # Measure wall-clock runtime (baseline), then the speedup after optimizing
+  python hotspot_analysis.py bench --workload "minigzip.exe -k big.bin" --cwd C:\\out --out base.json
+  python hotspot_analysis.py bench --workload "minigzip.exe -k big.bin" --cwd C:\\out --baseline base.json
 """)
 
     parser.add_argument("modules_dir", nargs="?", help="Folder containing modules (.exe/.dll and .pdbs)")
