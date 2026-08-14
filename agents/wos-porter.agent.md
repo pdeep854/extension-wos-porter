@@ -52,12 +52,11 @@ The 8 phases you MUST execute in this exact order — each phase has a REQUIRED 
    - Clone with `git clone --recurse-submodules <url> <repoName>`. If the project uses Git LFS, also run `git lfs pull` (skip silently if `git lfs` is not installed and no LFS pointers exist).
    - If the repo was cloned without `--recurse-submodules` (e.g. reusing an existing folder), run `git submodule update --init --recursive` before creating the branch.
    - Verify with `git submodule status` — every line should show a commit hash without a leading `-` (missing) or `+` (out-of-date). If any submodule is missing/dirty, rerun `git submodule update --init --recursive --force` and report as blocking if it still fails.
-   - **MANDATORY: immediately after cloning, create and switch to the `arm64-port` branch:**
+   - **MANDATORY: immediately after cloning, create and switch to the `arm64-port` branch. Run this as a single terminal command — do NOT split into two calls, because `Set-Location` does not persist between shell invocations:**
      ```powershell
-     Set-Location $workDir
-     git checkout -b arm64-port
+     git -C $workDir checkout -b arm64-port
      ```
-     Every subsequent change (build fixes, source ports, NEON optimizations, README) MUST be committed on this branch. Never commit to `main` or `master`.
+     Verify the branch was created: `git -C $workDir branch` must list `* arm64-port`. If the command fails (e.g. branch already exists), run `git -C $workDir checkout arm64-port` instead. Every subsequent change (build fixes, source ports, NEON optimizations, README) MUST be committed on this branch. Never commit to `main` or `master`.
 3. Create todo list with EXACTLY these items (all 8 phases must appear):
    ```
    1. "Phase 1: Clone and branch" -> completed (you just did it)
