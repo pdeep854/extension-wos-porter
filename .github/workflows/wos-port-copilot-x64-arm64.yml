@@ -121,7 +121,12 @@ jobs:
           "COPILOT_CUSTOM_INSTRUCTIONS_DIRS=$instrDst" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Create x64-bench work directory
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path "C:\src\x64-bench" | Out-Null
+
       - name: Run x64-benchmarker agent (Copilot CLI)
+        working-directory: C:\src\x64-bench
         shell: pwsh
         run: |
           # Continue throughout: do NOT use 2>&1 — in PowerShell 5.1, redirecting
@@ -132,7 +137,16 @@ jobs:
           $logDir = "C:\src\x64-bench\_logs"
           New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
-          $prompt = "Build and benchmark this repository for x64: $env:WOS_REPO_URL"
+          $repoName = ($env:WOS_REPO_URL -split '/')[-1] -replace '\.git$',''
+          $prompt = @"
+Build and benchmark this repository for x64: $env:WOS_REPO_URL
+
+IMPORTANT:
+- Set your workRoot to: $env:X64_BENCH_WORKDIR
+- Clone the repository under: $env:X64_BENCH_WORKDIR
+- Create x64_benchmark/ inside the cloned repo: $env:X64_BENCH_WORKDIR\$repoName\x64_benchmark
+- Run ALL 7 phases without skipping any
+"@
           Write-Host "Prompt: $prompt"
           Write-Host "Model:  $env:COPILOT_MODEL"
 
@@ -183,8 +197,33 @@ jobs:
 
           if (-not (Test-Path $benchDir)) {
             Write-Warning "Expected x64_benchmark dir not found at $benchDir — falling back to full workdir search."
-            $found = Get-ChildItem $workRoot -Recurse -Directory -Filter x64_benchmark `
-                       -ErrorAction SilentlyContinue | Select-Object -First 1
+
+            # Check if the repo was at least cloned, to distinguish
+            # "agent never ran" from "agent ran but did not reach Phase 2".
+            $repoDir = Join-Path $workRoot $repoName
+            if (Test-Path (Join-Path $repoDir '.git')) {
+              Write-Host "Repo was cloned at $repoDir but x64_benchmark/ was never created — agent failed before or during Phase 2."
+            } elseif (Test-Path $workRoot) {
+              $clonedDirs = Get-ChildItem $workRoot -Directory -ErrorAction SilentlyContinue |
+                              Where-Object { Test-Path (Join-Path $_.FullName '.git') }
+              if ($clonedDirs) {
+                Write-Host "Repo cloned to unexpected dir(s): $($clonedDirs.FullName -join ', ')"
+              } else {
+                Write-Warning "No cloned repo found under $workRoot — agent may not have run at all or clone failed."
+              }
+            } else {
+              Write-Warning "$workRoot does not exist — agent did not run (Copilot CLI may have failed to start)."
+            }
+
+            # Search under workRoot and one level up (C:\src\) in case the
+            # agent created x64_benchmark/ directly under workRoot or a sibling.
+            $searchRoots = @($workRoot, (Split-Path $workRoot -Parent))
+            $found = $null
+            foreach ($root in $searchRoots) {
+              $found = Get-ChildItem $root -Recurse -Directory -Filter x64_benchmark `
+                         -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($found) { break }
+            }
             if ($found) {
               $benchDir = $found.FullName
               Write-Host "Found x64_benchmark at $benchDir"
@@ -434,10 +473,30 @@ jobs:
           # Build the prompt. If an x64 benchmark result was downloaded,
           # tell the porter where to find it so the optimizer can use it.
           $x64BenchDir = "${{ steps.bench_path.outputs.x64_bench_dir }}"
+          $repoName = ($env:WOS_REPO_URL -split '/')[-1] -replace '\.git$',''
+          $workRoot = "C:\src\wos-porter"
+
           if ($x64BenchDir -and (Test-Path $x64BenchDir)) {
-            $prompt = "Port this repository to Windows ARM64: $env:WOS_REPO_URL`n`nAn x64 benchmark result is available at: $x64BenchDir`nUse it to guide ARM64 optimizations."
+            $prompt = @"
+Port this repository to Windows ARM64: $env:WOS_REPO_URL
+
+IMPORTANT:
+- Clone the repository under: $workRoot
+- All work must be done on a branch named: arm64-port
+- Write the port summary to: $workRoot\$repoName\ARM64-PORT.md
+- An x64 benchmark result is available at: $x64BenchDir — use it to guide ARM64 optimizations
+- Run ALL 8 phases without skipping any
+"@
           } else {
-            $prompt = "Port this repository to Windows ARM64: $env:WOS_REPO_URL"
+            $prompt = @"
+Port this repository to Windows ARM64: $env:WOS_REPO_URL
+
+IMPORTANT:
+- Clone the repository under: $workRoot
+- All work must be done on a branch named: arm64-port
+- Write the port summary to: $workRoot\$repoName\ARM64-PORT.md
+- Run ALL 8 phases without skipping any
+"@
           }
 
           Write-Host "Prompt: $prompt"
