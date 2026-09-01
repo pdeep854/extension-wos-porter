@@ -27,6 +27,11 @@ If any variable is empty after the cache read, run the slow path below.
 
 ```powershell
 $hostArch = $env:PROCESSOR_ARCHITECTURE   # AMD64 or ARM64
+# Correct for x64-emulated shells on Windows ARM64 (Git Bash, cmd under WoW64)
+if ($hostArch -eq 'AMD64') {
+    $wmiArch = (Get-WmiObject Win32_Processor | Select-Object -First 1).Architecture
+    if ($wmiArch -eq 12) { $hostArch = 'ARM64' }
+}
 if ($hostArch -eq 'ARM64') {
     $hostDir = 'HostARM64\ARM64'; $vcvars = 'vcvarsarm64.bat';        $dumpbinHost = 'HostARM64\ARM64'
 } else {
