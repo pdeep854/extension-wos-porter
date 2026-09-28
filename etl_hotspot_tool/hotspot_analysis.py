@@ -1,3 +1,6 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause-Clear
+
 """
 WPA Hotspot Tool - Command-line version:
   Generate SymCache -> Run wpaexporter -> Analyze hotspots
