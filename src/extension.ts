@@ -15,6 +15,14 @@ const AGENT_FILES = [
     'wos-optimizer.agent.md',
     'x64-benchmarker.agent.md',
     'wos-benchmark-optimizer.agent.md',
+    'wos-etl-hotspot.agent.md',
+];
+
+// Tool subdirectories to copy alongside agents (e.g. Python helper scripts).
+// Each entry is a folder name relative to the extension root; it is copied to
+// the same name under targetAgentsDir() so agents can find it there.
+const TOOL_DIRS = [
+    'etl_hotspot_tool',
 ];
 
 const INSTRUCTION_FILES = [
@@ -136,6 +144,16 @@ function installAll(context: vscode.ExtensionContext): void {
             if (fs.existsSync(src)) { copyFileSafe(src, safeJoin(promptsDst, f)); }
         }
     }
+
+    // Tool directories (Python helpers etc.) — copied into the agents dir so
+    // agents can resolve them at ~/.copilot/agents/<tool_dir>/
+    for (const d of TOOL_DIRS) {
+        const src = safeJoin(ext, d);
+        const dst = safeJoin(agentsDst, d);
+        if (fs.existsSync(src) && fs.statSync(src).isDirectory()) {
+            copyDirRecursive(src, dst);
+        }
+    }
 }
 
 // Output channel is created lazily so tests / activation errors can still surface.
@@ -175,6 +193,13 @@ function removeAll(): void {
         const p = safeJoin(promptsDst, f);
         if (fs.existsSync(p)) {
             try { fs.unlinkSync(p); }
+            catch (err) { output().appendLine(`uninstall: failed to remove ${p}: ${(err as Error).message}`); }
+        }
+    }
+    for (const d of TOOL_DIRS) {
+        const p = safeJoin(agentsDst, d);
+        if (fs.existsSync(p)) {
+            try { fs.rmSync(p, { recursive: true, force: true }); }
             catch (err) { output().appendLine(`uninstall: failed to remove ${p}: ${(err as Error).message}`); }
         }
     }

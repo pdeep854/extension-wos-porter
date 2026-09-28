@@ -42,9 +42,16 @@ Run the `x64-benchmarker` agent to capture an x64 baseline, then pass it to the 
 
 → **[x64 Competitive Analysis guide](docs/x64-competitive-analysis.md)**
 
+## ETL Hotspot Optimization
+
+Use the `wos-etl-hotspot` agent when you have a representative Windows performance trace (`.etl`). It identifies the top-20 CPU-hottest functions in that workload, walks their transitive call graphs, and applies ARM64 optimizations (NEON/SVE/SVE2/SME vectorization, scalar/branch/memory tuning, build flags) to exactly those hotspots — rather than optimizing speculatively.
+
+→ **[ETL Hotspot Optimization guide](docs/etl-hotspot-optimization.md)**
+
 ## Documentation
 
 - [WoS Porter Details](docs/wos-porter-details.md) — Agents, instructions, skills, prompts, commands, supported build systems
+- [ETL Hotspot Optimization](docs/etl-hotspot-optimization.md) — Trace-driven ARM64 optimization using the `wos-etl-hotspot` agent (Copilot, Claude, Codex)
 - [Skip Optimization](docs/skip-optimization.md) — How to skip Phase 7 when only porting is needed
 - [x64 Competitive Analysis](docs/x64-competitive-analysis.md) — Baseline benchmarking and differential optimization guide
 - [Development](docs/development.md) — Build, package, and publish commands for contributors
