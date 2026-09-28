@@ -6,8 +6,8 @@ This is the Claude Code packaging of the `wos-porter` VS Code extension — the 
 
 ## What's inside
 
-- **commands/** — `/wos-porter:wos-porter <repo-url>` — the entry-point orchestrator that runs the 8-phase pipeline in the main loop.
-- **agents/** — the `wos-porter` pipeline instructions plus 6 sub-agents (`wos-analyzer`, `wos-build-porter`, `wos-code-porter`, `wos-builder`, `wos-tester`, `wos-optimizer`) spawned by the orchestrator.
+- **commands/** — `/wos-porter:wos-porter <repo-url>` — the entry-point orchestrator that runs the 8-phase pipeline in the main loop. `/wos-porter:wos-etl-hotspot` — ETL trace hotspot analyzer and ARM64 optimizer.
+- **agents/** — the `wos-porter` pipeline instructions plus 7 sub-agents (`wos-analyzer`, `wos-build-porter`, `wos-code-porter`, `wos-builder`, `wos-tester`, `wos-optimizer`, `wos-etl-hotspot`) spawned by the orchestrator.
 - **prompts/** — `wos-verify-port.prompt.md`, the Phase 8 verification gate the orchestrator reads and runs inline.
 - **skills/** — 11 auto-loading skills (NEON reference, toolchain discovery, SSE/AVX→NEON translation, build-error recipes, WoA dashboard, etc.).
 - **references/** — porting-knowledge docs and per-build-system recipes loaded on demand by the agents.
@@ -93,7 +93,7 @@ This works once the repo (including the root `.claude-plugin/marketplace.json` a
    /plugin
    ```
 
-   You should see **wos-porter** listed as enabled. The `/wos-porter:wos-porter` command and the six `wos-*` sub-agents are now available.
+   You should see **wos-porter** listed as enabled. The `/wos-porter:wos-porter`, `/wos-porter:wos-etl-hotspot`, and `/wos-porter:x64-benchmarker` commands and the `wos-*` sub-agents are now available.
 
 To update later, refresh the marketplace and reinstall:
 
@@ -180,6 +180,44 @@ What happens, end to end:
 
 The ported code stays **local** on the `arm64-port` branch — nothing is pushed, and `main`/`master` is never modified.
 
+### ETL trace hotspot analysis and ARM64 optimization
+
+Use this command when you already have a built application and an ETL trace from a representative workload and want ARM64 optimizations focused on the functions that actually dominate that workload.
+
+**Prerequisites (additional to the base prerequisites above):**
+
+- **Windows Performance Toolkit** — `wpaexporter.exe` on PATH (installed with the Windows ADK, or via the Windows Performance Toolkit standalone download).
+- A built application `.exe` and matching `.pdb` file(s).
+- An ETL trace (`.etl`) captured from a representative workload run.
+
+**Command:**
+
+```
+/wos-porter:wos-etl-hotspot <exe> <pdb> <etl> <source-dir>
+```
+
+| Argument | Description |
+|---|---|
+| `<exe>` | Absolute path to the application executable, e.g. `C:\build\myapp.exe` |
+| `<pdb>` | Absolute path to the PDB file or a folder containing PDB files |
+| `<etl>` | Absolute path to the ETL trace, e.g. `C:\traces\scenario.etl` |
+| `<source-dir>` | Absolute path to the application source tree |
+
+**Example:**
+
+```
+/wos-porter:wos-etl-hotspot C:\build\sqlite3.exe C:\build\sqlite3.pdb C:\traces\query_workload.etl C:\src\sqlite
+```
+
+**What happens, end to end:**
+
+1. Runs `hotspot_analysis.py` against the ETL trace — generates a SymCache from the PDB, exports CPU sampling data via `wpaexporter`, and cross-references the top hotspot functions against the source tree.
+2. Reads the full source body of each hotspot function and traces its transitive callees.
+3. Applies the most effective Windows ARM64 optimizations to each hotspot and its dependent functions — NEON/SVE/SVE2/SME vector extensions, scalar and micro-architectural tuning, branch/prefetch/memory-layout improvements, or compiler-flag changes — guarded and correctness-first.
+4. Delegates the ARM64 build to the `wos-builder` sub-agent.
+5. Delegates test and validation to the `wos-tester` sub-agent.
+6. Writes a detailed HTML report into `<source-dir>` documenting every hotspot, its transitive callees, the optimization applied (or why not), the exact code changes, and build/test results.
+
 ### Controlling the work directory (optional)
 
 By default the pipeline clones into `C:\src\wos-porter\<repo>`. Override it by setting `WOS_PORTER_WORKDIR` before launching Claude Code:
@@ -203,5 +241,7 @@ To also remove the marketplace entry:
 ## Troubleshooting
 
 - **`/wos-porter:wos-porter` isn't recognized** — confirm the plugin is enabled with `/plugin`. If it's missing, re-run the install step.
+- **`/wos-porter:wos-etl-hotspot` isn't recognized** — reinstall the plugin to pick up the new command: `/plugin uninstall wos-porter@extension-wos-porter` then re-run the install step.
+- **`wpaexporter` not found** — install the Windows Assessment and Deployment Kit (ADK) and ensure `wpaexporter.exe` is on your PATH. It is part of the **Windows Performance Toolkit** component.
 - **Marketplace add fails from GitHub** — make sure the plugin files and the root `.claude-plugin/marketplace.json` are committed and pushed to the branch you're pointing at (Claude Code reads the pushed tree, not your local working copy). Pin the branch with `@<branch>` if it isn't on the default branch.
 - **Build phase reports missing toolchain** — install the **MSVC v143 - ARM64/ARM64EC build tools** and **Windows 11 SDK** via the Visual Studio Installer, then retry.
