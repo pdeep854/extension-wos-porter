@@ -19,6 +19,12 @@ const AGENT_FILES = [
     'wos-optimizer.agent.md',
     'x64-benchmarker.agent.md',
     'wos-benchmark-optimizer.agent.md',
+    'wos-etl-hotspot.agent.md',
+];
+
+// Tool subdirectories copied into the agents dir alongside the agent .md files.
+const TOOL_DIRS = [
+    'etl_hotspot_tool',
 ];
 
 const INSTRUCTION_FILES = [
@@ -94,6 +100,7 @@ try {
     const promptsDst      = path.join(home, 'prompts');
 
     for (const f of AGENT_FILES)       { tryUnlink(safeJoin(agentsDst, f)); }
+    for (const d of TOOL_DIRS)         { tryRmDirRecursive(safeJoin(agentsDst, d)); }
     for (const f of INSTRUCTION_FILES) { tryUnlink(safeJoin(instructionsDst, f)); }
     for (const d of SKILL_DIRS)        { tryRmDirRecursive(safeJoin(skillsDst, d)); }
     for (const f of PROMPT_FILES)      { tryUnlink(safeJoin(promptsDst, f)); }
